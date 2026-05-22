@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"slices"
 	"strings"
@@ -338,7 +339,19 @@ func assertPagination(t *testing.T, result Result, total, displayed int, next st
 func assertUpstreamURL(t *testing.T, got, want string) {
 	t.Helper()
 
-	if got != want {
+	gotURL, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parse upstream URL %q: %v", got, err)
+	}
+	wantURL, err := url.Parse(want)
+	if err != nil {
+		t.Fatalf("parse wanted upstream URL %q: %v", want, err)
+	}
+
+	if gotURL.Scheme != wantURL.Scheme || gotURL.Host != wantURL.Host || gotURL.Path != wantURL.Path {
 		t.Fatalf("upstream URL = %q, want %q", got, want)
+	}
+	if !reflect.DeepEqual(gotURL.Query(), wantURL.Query()) {
+		t.Fatalf("upstream URL query = %#v, want %#v", gotURL.Query(), wantURL.Query())
 	}
 }
