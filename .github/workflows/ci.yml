@@ -6,6 +6,8 @@ env:
   OAPI_CODEGEN_VERSION: "v2.5.0"
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 jobs:

@@ -1,5 +1,5 @@
 set quiet := true
-set shell := ["zsh", "-cu"]
+set shell := ["bash", "-cu"]
 
 export GOCACHE := justfile_directory() + "/.cache/go-build"
 export GOLANGCI_LINT_CACHE := justfile_directory() + "/.cache/golangci-lint"
