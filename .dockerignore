@@ -1,0 +1,5 @@
+.cache/
+.git/
+tmp/
+pkgsite-mcp
+coverage.txt

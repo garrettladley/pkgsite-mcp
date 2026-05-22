@@ -1,0 +1,47 @@
+version: "2"
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+
+linters:
+  enable:
+    - bodyclose
+    - canonicalheader
+    - errcheck
+    - exhaustive
+    - gochecknoinits
+    - gomoddirectives
+    - goprintffuncname
+    - govet
+    - ineffassign
+    - misspell
+    - nakedret
+    - nestif
+    - nilerr
+    - noctx
+    - nolintlint
+    - paralleltest
+    - rowserrcheck
+    - staticcheck
+    - tparallel
+    - unconvert
+    - unparam
+    - unused
+    - whitespace
+
+  settings:
+    exhaustive:
+      check:
+        - switch
+        - map
+      default-signifies-exhaustive: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+run:
+  timeout: 5m
+  tests: true
