@@ -6,6 +6,8 @@ export GOLANGCI_LINT_CACHE := justfile_directory() + "/.cache/golangci-lint"
 export GOFLAGS := "-buildvcs=false"
 export GOROOT := ""
 
+oapi_codegen_version := env("OAPI_CODEGEN_VERSION", "v2.7.0")
+
 [private]
 default:
     just --list
@@ -23,7 +25,7 @@ tidy:
 # generate pkgsite API client
 [group('codegen')]
 generate:
-    oapi-codegen -config internal/pkgsiteapi/oapi-codegen.yaml internal/pkgsiteapi/openapi.json
+    go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@{{ oapi_codegen_version }} -config internal/pkgsiteapi/oapi-codegen.yaml internal/pkgsiteapi/openapi.json
 
 # verify generated code is up to date
 [group('ci')]
