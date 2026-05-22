@@ -1,0 +1,8 @@
+package: pkgsiteapi
+output: internal/pkgsiteapi/client.gen.go
+generate:
+  models: true
+  client: true
+  embedded-spec: false
+output-options:
+  skip-prune: false
