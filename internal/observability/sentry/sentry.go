@@ -72,11 +72,15 @@ func (b Backend) Start(ctx context.Context, opts observability.Options, _ *slog.
 	}
 	if opts.EnableMetrics {
 		meter := getsentry.NewMeter(ctx)
-		meter.SetAttributes(
+		attrs := []sentryattribute.Builder{
 			sentryattribute.String("service.name", opts.ServiceName),
 			sentryattribute.String("service.version", opts.ServiceVersion),
 			sentryattribute.String("deployment.environment.name", opts.Environment),
-		)
+		}
+		if revision := strings.TrimSpace(opts.ServiceRevision); revision != "" && revision != "unknown" {
+			attrs = append(attrs, sentryattribute.String("vcs.ref.head.revision", revision))
+		}
+		meter.SetAttributes(attrs...)
 		handle.metricSink = metricSink{meter: meter}
 	}
 	return handle, nil

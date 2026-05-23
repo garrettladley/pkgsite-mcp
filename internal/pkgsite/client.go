@@ -41,7 +41,7 @@ func New(cfg config.Pkgsite, store kv.Store, opts ...Option) (*Client, error) {
 		baseURL,
 		pkgsiteapi.WithHTTPClient(doer),
 		pkgsiteapi.WithRequestEditorFn(func(_ context.Context, req *http.Request) error {
-			req.Header.Set("User-Agent", "pkgsite-mcp/"+version.Version)
+			req.Header.Set("User-Agent", "pkgsite-mcp/"+version.Public())
 			req.Header.Set("Accept", "application/json")
 			return nil
 		}),
@@ -225,7 +225,7 @@ func (c *Client) warmSearchResult(ctx context.Context, result Result) {
 		return
 	}
 	item := result.Items[0]
-	path := stringValue(item["path"], "")
+	path := stringValue(item["packagePath"], stringValue(item["path"], ""))
 	if path == "" {
 		return
 	}

@@ -7,6 +7,9 @@ export GOFLAGS := "-buildvcs=false"
 export GOROOT := ""
 
 oapi_codegen_version := env("OAPI_CODEGEN_VERSION", "v2.7.0")
+git_sha := `git rev-parse HEAD 2>/dev/null || echo unknown`
+git_short_sha := `git rev-parse --short=12 HEAD 2>/dev/null || echo dev`
+version_ldflags := "-s -w -X github.com/garrettladley/pkgsite-mcp/internal/version.Version=sha-" + git_short_sha + " -X github.com/garrettladley/pkgsite-mcp/internal/version.Commit=" + git_sha
 
 [private]
 default:
@@ -65,7 +68,7 @@ lint-fix:
 # build the MCP server
 [group('build')]
 build:
-    go build -ldflags="-s -w" -o .cache/bin/pkgsite-mcp ./cmd/pkgsite-mcp
+    go build -ldflags="{{ version_ldflags }}" -o .cache/bin/pkgsite-mcp ./cmd/pkgsite-mcp
 
 # run Go vet
 [group('ci')]
@@ -75,7 +78,7 @@ vet:
 # build the Docker image
 [group('docker')]
 docker-build:
-    docker build -t pkgsite-mcp:local .
+    docker build --build-arg VERSION=sha-{{ git_short_sha }} --build-arg COMMIT={{ git_sha }} -t pkgsite-mcp:local .
 
 # deploy to Fly
 [group('deploy')]

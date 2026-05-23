@@ -23,6 +23,7 @@ const instrumentationName = "github.com/garrettladley/pkgsite-mcp"
 type Options struct {
 	ServiceName      string
 	ServiceVersion   string
+	ServiceRevision  string
 	Environment      string
 	FlushTimeout     time.Duration
 	TracesSampleRate float64
@@ -77,14 +78,18 @@ func Setup(ctx context.Context, opts Options, logger *slog.Logger, backend Backe
 		handle.backend = started
 	}
 
+	attrs := []attribute.KeyValue{
+		attribute.String("service.name", opts.ServiceName),
+		attribute.String("service.version", opts.ServiceVersion),
+		attribute.String("deployment.environment.name", opts.Environment),
+	}
+	if revision := strings.TrimSpace(opts.ServiceRevision); revision != "" && revision != "unknown" {
+		attrs = append(attrs, attribute.String("vcs.ref.head.revision", revision))
+	}
+
 	res, err := resource.Merge(
 		resource.Default(),
-		resource.NewWithAttributes(
-			"",
-			attribute.String("service.name", opts.ServiceName),
-			attribute.String("service.version", opts.ServiceVersion),
-			attribute.String("deployment.environment.name", opts.Environment),
-		),
+		resource.NewWithAttributes("", attrs...),
 	)
 	if err != nil {
 		return nil, err

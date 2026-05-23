@@ -4,6 +4,9 @@ FROM golang:1.26-alpine AS builder
 
 WORKDIR /app
 
+ARG VERSION=dev
+ARG COMMIT=unknown
+
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
@@ -14,7 +17,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux go build \
     -buildvcs=false \
-    -ldflags="-s -w" \
+    -ldflags="-s -w -X github.com/garrettladley/pkgsite-mcp/internal/version.Version=${VERSION} -X github.com/garrettladley/pkgsite-mcp/internal/version.Commit=${COMMIT}" \
     -o /pkgsite-mcp ./cmd/pkgsite-mcp
 
 FROM scratch

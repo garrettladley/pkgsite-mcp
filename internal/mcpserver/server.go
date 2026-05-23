@@ -19,7 +19,9 @@ import (
 )
 
 const (
-	mcpServerName = "pkgsite"
+	mcpServerName       = "pkgsite"
+	mcpServerTitle      = "pkg.go.dev MCP"
+	mcpServerWebsiteURL = "https://github.com/garrettladley/pkgsite-mcp"
 
 	// Stateless streamable HTTP sessions close when each request exits.
 	statelessSessionTimeout time.Duration = 0
@@ -62,7 +64,8 @@ func RunStdio(ctx context.Context) error {
 func observabilityOptions(cfg config.Observability) observability.Options {
 	return observability.Options{
 		ServiceName:      cfg.ServiceName,
-		ServiceVersion:   version.Version,
+		ServiceVersion:   version.Release(),
+		ServiceRevision:  version.Commit,
 		Environment:      cfg.Environment,
 		FlushTimeout:     cfg.FlushTimeout,
 		TracesSampleRate: cfg.TracesSampleRate,
@@ -98,7 +101,12 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) mcpServer() *mcp.Server {
 	server := mcp.NewServer(
-		&mcp.Implementation{Name: mcpServerName, Version: version.Version},
+		&mcp.Implementation{
+			Name:       mcpServerName,
+			Title:      mcpServerTitle,
+			Version:    version.Public(),
+			WebsiteURL: mcpServerWebsiteURL,
+		},
 		&mcp.ServerOptions{Logger: s.logger},
 	)
 	tools.Register(server, s.client)
