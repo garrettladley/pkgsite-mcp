@@ -1,7 +1,6 @@
 package pkgsite
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -39,7 +38,7 @@ func TestClientModuleSuccessFromFakeUpstream(t *testing.T) {
 		})
 	})
 
-	got, err := client.Module(context.Background(), ModuleInput{
+	got, err := client.Module(t.Context(), ModuleInput{
 		ModulePath:    "golang.org/x/oauth2",
 		Version:       "v0.35.0",
 		IncludeReadme: true,
@@ -94,7 +93,7 @@ func TestClientSymbolsSuccessFromFakeUpstream(t *testing.T) {
 		})
 	})
 
-	got, err := client.Symbols(context.Background(), SymbolsInput{
+	got, err := client.Symbols(t.Context(), SymbolsInput{
 		PackagePath: "golang.org/x/oauth2",
 		ModulePath:  "golang.org/x/oauth2",
 		Version:     "v0.35.0",
@@ -144,7 +143,7 @@ func TestClientSearchSuccessFromFakeUpstream(t *testing.T) {
 		})
 	})
 
-	got, err := client.Search(context.Background(), SearchInput{
+	got, err := client.Search(t.Context(), SearchInput{
 		Query:  "github.com/google/uuid",
 		Limit:  2,
 		Filter: "uuid",
@@ -164,6 +163,49 @@ func TestClientSearchSuccessFromFakeUpstream(t *testing.T) {
 	assertPagination(t, got, 1, 1, "")
 }
 
+func TestClientImportedByAcceptsStringItems(t *testing.T) {
+	t.Parallel()
+
+	client, _ := newFakeUpstreamClient(t, func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+		t.Helper()
+
+		assertPath(t, r, "/imported-by/slices")
+		assertQuery(t, r, map[string][]string{
+			"module": {"std"},
+			"limit":  {"25"},
+		})
+
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"modulePath": "std",
+			"version":    "v1.26.3",
+			"importedBy": map[string]any{
+				"total": 2,
+				"items": []string{"sort", "maps"},
+			},
+		})
+	})
+
+	got, err := client.ImportedBy(t.Context(), ImportedByInput{
+		PackagePath: "slices",
+		ModulePath:  "std",
+	})
+	if err != nil {
+		t.Fatalf("ImportedBy returned error: %v", err)
+	}
+	if got.Error != nil {
+		t.Fatalf("ImportedBy returned Result.Error: %+v", got.Error)
+	}
+	assertSummary(t, got, map[string]any{
+		"kind":        "imported_by",
+		"packagePath": "slices",
+		"modulePath":  "std",
+		"version":     "v1.26.3",
+		"count":       2,
+	})
+	assertItemPaths(t, got.Items, []string{"sort", "maps"})
+	assertPagination(t, got, 2, 2, "")
+}
+
 func TestClientUpstream4xxReturnsStructuredResultError(t *testing.T) {
 	t.Parallel()
 
@@ -171,7 +213,7 @@ func TestClientUpstream4xxReturnsStructuredResultError(t *testing.T) {
 		name     string
 		status   int
 		body     map[string]any
-		callFunc func(context.Context, *Client) (Result, error)
+		callFunc func(*testing.T, *Client) (Result, error)
 	}{
 		{
 			name:   "module not found",
@@ -180,8 +222,9 @@ func TestClientUpstream4xxReturnsStructuredResultError(t *testing.T) {
 				"code":    "not_found",
 				"message": "module not found",
 			},
-			callFunc: func(ctx context.Context, client *Client) (Result, error) {
-				return client.Module(ctx, ModuleInput{ModulePath: "example.com/missing", Version: "v0.0.0"})
+			callFunc: func(t *testing.T, client *Client) (Result, error) {
+				t.Helper()
+				return client.Module(t.Context(), ModuleInput{ModulePath: "example.com/missing", Version: "v0.0.0"})
 			},
 		},
 		{
@@ -191,8 +234,9 @@ func TestClientUpstream4xxReturnsStructuredResultError(t *testing.T) {
 				"code":    "bad_request",
 				"message": "missing query",
 			},
-			callFunc: func(ctx context.Context, client *Client) (Result, error) {
-				return client.Search(ctx, SearchInput{Query: ""})
+			callFunc: func(t *testing.T, client *Client) (Result, error) {
+				t.Helper()
+				return client.Search(t.Context(), SearchInput{Query: ""})
 			},
 		},
 	}
@@ -206,7 +250,7 @@ func TestClientUpstream4xxReturnsStructuredResultError(t *testing.T) {
 				writeJSON(t, w, tt.status, tt.body)
 			})
 
-			got, err := tt.callFunc(context.Background(), client)
+			got, err := tt.callFunc(t, client)
 			if err != nil {
 				t.Fatalf("client call returned error: %v", err)
 			}
@@ -253,51 +297,53 @@ func newFakeUpstreamClient(t *testing.T, handler func(*testing.T, http.ResponseW
 	return client, server.URL
 }
 
-func assertHeader(t *testing.T, r *http.Request, key, want string) {
+func assertHeader(t testing.TB, r *http.Request, key, want string) {
 	t.Helper()
 
 	if got := r.Header.Get(key); got != want {
-		t.Fatalf("%s header = %q, want %q", key, got, want)
+		t.Errorf("%s header = %q, want %q", key, got, want)
 	}
 }
 
-func assertPath(t *testing.T, r *http.Request, want string) {
+func assertPath(t testing.TB, r *http.Request, want string) {
 	t.Helper()
 
 	if got := r.URL.Path; got != want {
-		t.Fatalf("path = %q, want %q", got, want)
+		t.Errorf("path = %q, want %q", got, want)
 	}
 }
 
-func assertQuery(t *testing.T, r *http.Request, want map[string][]string) {
+func assertQuery(t testing.TB, r *http.Request, want map[string][]string) {
 	t.Helper()
 
 	got := r.URL.Query()
 	if len(got) != len(want) {
-		t.Fatalf("query = %#v, want %#v", got, want)
+		t.Errorf("query = %#v, want %#v", got, want)
+		return
 	}
 	for key, wantValues := range want {
 		gotValues, ok := got[key]
 		if !ok {
-			t.Fatalf("query missing key %q in %#v", key, got)
+			t.Errorf("query missing key %q in %#v", key, got)
+			continue
 		}
 		if !slices.Equal(gotValues, wantValues) {
-			t.Fatalf("query[%q] = %#v, want %#v", key, gotValues, wantValues)
+			t.Errorf("query[%q] = %#v, want %#v", key, gotValues, wantValues)
 		}
 	}
 }
 
-func writeJSON(t *testing.T, w http.ResponseWriter, status int, payload any) {
+func writeJSON(t testing.TB, w http.ResponseWriter, status int, payload any) {
 	t.Helper()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(payload); err != nil {
-		t.Fatalf("encode response: %v", err)
+		t.Errorf("encode response: %v", err)
 	}
 }
 
-func assertSummary(t *testing.T, result Result, want map[string]any) {
+func assertSummary(t testing.TB, result Result, want map[string]any) {
 	t.Helper()
 
 	if !reflect.DeepEqual(result.Summary, want) {
@@ -305,7 +351,7 @@ func assertSummary(t *testing.T, result Result, want map[string]any) {
 	}
 }
 
-func assertItemNames(t *testing.T, items []map[string]any, want []string) {
+func assertItemNames(t testing.TB, items []map[string]any, want []string) {
 	t.Helper()
 
 	got := make([]string, 0, len(items))
@@ -321,7 +367,23 @@ func assertItemNames(t *testing.T, items []map[string]any, want []string) {
 	}
 }
 
-func assertPagination(t *testing.T, result Result, total, displayed int, next string) {
+func assertItemPaths(t testing.TB, items []map[string]any, want []string) {
+	t.Helper()
+
+	got := make([]string, 0, len(items))
+	for _, item := range items {
+		path, ok := item["path"].(string)
+		if !ok {
+			t.Fatalf("item path = %#v, want string", item["path"])
+		}
+		got = append(got, path)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("item paths = %#v, want %#v", got, want)
+	}
+}
+
+func assertPagination(t testing.TB, result Result, total, displayed int, next string) {
 	t.Helper()
 
 	want := map[string]any{
@@ -336,7 +398,7 @@ func assertPagination(t *testing.T, result Result, total, displayed int, next st
 	}
 }
 
-func assertUpstreamURL(t *testing.T, got, want string) {
+func assertUpstreamURL(t testing.TB, got, want string) {
 	t.Helper()
 
 	gotURL, err := url.Parse(got)

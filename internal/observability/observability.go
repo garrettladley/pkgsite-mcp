@@ -165,6 +165,8 @@ type multiHandler struct {
 	handlers []slog.Handler
 }
 
+var _ slog.Handler = multiHandler{}
+
 func (h multiHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	for _, handler := range h.handlers {
 		if handler.Enabled(ctx, level) {

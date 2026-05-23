@@ -23,6 +23,8 @@ type Backend struct {
 	dsn string
 }
 
+var _ observability.Backend = Backend{}
+
 func New(dsn string) observability.Backend {
 	dsn = strings.TrimSpace(dsn)
 	if dsn == "" {
@@ -86,6 +88,11 @@ type Handle struct {
 	metricSink   observability.MetricSink
 	flushTimeout time.Duration
 }
+
+var (
+	_ observability.BackendHandle = (*Handle)(nil)
+	_ observability.MetricSink    = metricSink{}
+)
 
 func (h *Handle) TraceExporter() sdktrace.SpanExporter {
 	return h.exporter
