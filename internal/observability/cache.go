@@ -14,11 +14,12 @@ var cacheMetrics = newCacheMetrics()
 type CacheOutcome string
 
 const (
-	CacheOutcomeHit      CacheOutcome = "hit"
-	CacheOutcomeMiss     CacheOutcome = "miss"
-	CacheOutcomeDisabled CacheOutcome = "disabled"
-	CacheOutcomeError    CacheOutcome = "error"
-	CacheOutcomeBypass   CacheOutcome = "bypass"
+	CacheOutcomeHit       CacheOutcome = "hit"
+	CacheOutcomeMiss      CacheOutcome = "miss"
+	CacheOutcomeDisabled  CacheOutcome = "disabled"
+	CacheOutcomeError     CacheOutcome = "error"
+	CacheOutcomeBypass    CacheOutcome = "bypass"
+	CacheOutcomeCoalesced CacheOutcome = "coalesced"
 )
 
 type cacheMetricSet struct {
@@ -27,6 +28,7 @@ type cacheMetricSet struct {
 	lookups      metric.Int64Counter
 	hits         metric.Int64Counter
 	misses       metric.Int64Counter
+	coalesced    metric.Int64Counter
 	writes       metric.Int64Counter
 	writeErrors  metric.Int64Counter
 	lookupMillis metric.Float64Histogram
@@ -41,6 +43,7 @@ func newCacheMetrics() *cacheMetricSet {
 	lookups, _ := meter.Int64Counter("pkgsite.cache.lookup.count")
 	hits, _ := meter.Int64Counter("pkgsite.cache.hit.count")
 	misses, _ := meter.Int64Counter("pkgsite.cache.miss.count")
+	coalesced, _ := meter.Int64Counter("pkgsite.cache.coalesced.count")
 	writes, _ := meter.Int64Counter("pkgsite.cache.write.count")
 	writeErrors, _ := meter.Int64Counter("pkgsite.cache.write_error.count")
 	lookupMillis, _ := meter.Float64Histogram("pkgsite.cache.lookup.duration", metric.WithUnit("ms"))
@@ -48,6 +51,7 @@ func newCacheMetrics() *cacheMetricSet {
 		lookups:      lookups,
 		hits:         hits,
 		misses:       misses,
+		coalesced:    coalesced,
 		writes:       writes,
 		writeErrors:  writeErrors,
 		lookupMillis: lookupMillis,
@@ -71,11 +75,16 @@ func RecordCacheLookup(ctx context.Context, outcome CacheOutcome, duration time.
 		cacheMetrics.hits.Add(ctx, 1)
 	case CacheOutcomeMiss:
 		cacheMetrics.misses.Add(ctx, 1)
+	case CacheOutcomeCoalesced:
+		cacheMetrics.coalesced.Add(ctx, 1)
 	case CacheOutcomeDisabled, CacheOutcomeError, CacheOutcomeBypass:
 	}
 
 	if holder := cacheMetrics.sink.Load(); holder != nil {
 		holder.sink.Count(ctx, "pkgsite.cache.lookup", 1, outcomeAttr)
+		if outcome == CacheOutcomeCoalesced {
+			holder.sink.Count(ctx, "pkgsite.cache.coalesced", 1, outcomeAttr)
+		}
 		holder.sink.Distribution(ctx, "pkgsite.cache.lookup.duration", float64(duration)/float64(time.Millisecond), "ms", outcomeAttr)
 	}
 }
