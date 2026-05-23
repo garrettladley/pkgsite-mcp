@@ -9,24 +9,24 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
-
-	"github.com/getsentry/sentry-go"
-	sentryhttp "github.com/getsentry/sentry-go/http"
 
 	"github.com/garrettladley/pkgsite-mcp/internal/config"
 	"github.com/garrettladley/pkgsite-mcp/internal/mcpserver"
 	"github.com/garrettladley/pkgsite-mcp/internal/middleware"
+	"github.com/garrettladley/pkgsite-mcp/internal/observability"
+	sentryobs "github.com/garrettladley/pkgsite-mcp/internal/observability/sentry"
 	"github.com/garrettladley/pkgsite-mcp/internal/pkgsite"
 	"github.com/garrettladley/pkgsite-mcp/internal/version"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 type Config struct {
-	Addr    string
-	Pkgsite config.Pkgsite
-	Sentry  config.Sentry
+	Addr          string
+	Observability config.Observability
+	Pkgsite       config.Pkgsite
+	Sentry        config.Sentry
 }
 
 func ConfigFromEnv(addr string) (Config, error) {
@@ -34,13 +34,25 @@ func ConfigFromEnv(addr string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	return Config{Addr: cfg.HTTPAddr(addr), Pkgsite: cfg.Pkgsite, Sentry: cfg.Sentry}, nil
+	return Config{Addr: cfg.HTTPAddr(addr), Observability: cfg.Observability, Pkgsite: cfg.Pkgsite, Sentry: cfg.Sentry}, nil
 }
 
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(os.Stdout, nil))
 	}
+	obs, err := observability.Setup(ctx, observabilityOptions(cfg.Observability), logger, sentryobs.New(cfg.Sentry.DSN))
+	if err != nil {
+		return err
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := obs.Shutdown(shutdownCtx); err != nil {
+			logger.ErrorContext(ctx, "shutdown observability", slog.Any("error", err))
+		}
+	}()
+	logger = obs.Logger
 
 	client, err := pkgsite.New(cfg.Pkgsite)
 	if err != nil {
@@ -57,16 +69,20 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		_, _ = fmt.Fprintf(w, `{"status":"ok","version":%q}`+"\n", version.Version)
 	})
 
-	handler, flushSentry, err := handlerWithSentry(mux, cfg.Sentry, logger)
-	if err != nil {
-		return err
-	}
-	defer flushSentry()
-	handler = middleware.Chain(
+	handler := middleware.Chain(
 		securityHeaders,
+		obs.Middleware,
 		logging(logger),
-		recovery,
-	)(handler)
+		recovery(obs),
+	)(mux)
+	handler = otelhttp.NewHandler(handler, "http.server",
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+			if r.Pattern != "" {
+				return r.Method + " " + r.Pattern
+			}
+			return r.Method + " " + r.URL.Path
+		}),
+	)
 
 	baseCtx, cancelBase := context.WithCancel(ctx)
 	defer cancelBase()
@@ -112,25 +128,16 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	return <-errCh
 }
 
-func handlerWithSentry(next http.Handler, cfg config.Sentry, logger *slog.Logger) (http.Handler, func(), error) {
-	dsn := strings.TrimSpace(cfg.DSN)
-	if dsn == "" {
-		return next, func() {}, nil
+func observabilityOptions(cfg config.Observability) observability.Options {
+	return observability.Options{
+		ServiceName:      cfg.ServiceName,
+		ServiceVersion:   version.Version,
+		Environment:      cfg.Environment,
+		FlushTimeout:     cfg.FlushTimeout,
+		TracesSampleRate: cfg.TracesSampleRate,
+		EnableLogs:       cfg.EnableLogs,
+		EnableMetrics:    cfg.EnableMetrics,
 	}
-	if err := sentry.Init(sentry.ClientOptions{
-		Dsn:     dsn,
-		Release: version.Version,
-	}); err != nil {
-		return nil, nil, fmt.Errorf("initialize sentry: %w", err)
-	}
-	logger.Info("sentry initialized")
-	sentryHandler := sentryhttp.New(sentryhttp.Options{
-		Repanic:         true,
-		WaitForDelivery: false,
-	})
-	return sentryHandler.Handle(next), func() {
-		sentry.Flush(2 * time.Second)
-	}, nil
 }
 
 func logging(logger *slog.Logger) middleware.Middleware {
@@ -139,25 +146,32 @@ func logging(logger *slog.Logger) middleware.Middleware {
 			start := time.Now()
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(rec, r)
-			logger.InfoContext(r.Context(), "http request",
+			args := []any{
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
 				slog.Int("status", rec.status),
 				slog.Duration("duration", time.Since(start)),
-			)
+			}
+			for _, attr := range observability.TraceAttrs(r.Context()) {
+				args = append(args, attr)
+			}
+			logger.InfoContext(r.Context(), "http request", args...)
 		})
 	}
 }
 
-func recovery(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			if recovered := recover(); recovered != nil {
-				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			}
-		}()
-		next.ServeHTTP(w, r)
-	})
+func recovery(obs *observability.Handle) middleware.Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					obs.Recover(r.Context(), recovered)
+					http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				}
+			}()
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func securityHeaders(next http.Handler) http.Handler {

@@ -14,5 +14,5 @@ func (s *Server) vulns(ctx context.Context, _ *mcp.CallToolRequest, input pkgsit
 		return nil, nil, fmt.Errorf("path is required")
 	}
 	result, err := s.client.Vulns(ctx, input)
-	return s.result(result, input.PageInput, toolNameVulns, map[string]any{"path": input.Path, "module_path": input.ModulePath, "version": input.Version, "limit": input.Limit, "token": input.Token, "filter": input.Filter}, err)
+	return s.result(ctx, result, input.PageInput, toolNameVulns, map[string]any{"path": input.Path, "module_path": input.ModulePath, "version": input.Version, "limit": input.Limit, "token": input.Token, "filter": input.Filter}, err)
 }
