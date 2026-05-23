@@ -42,10 +42,10 @@ func MCPRequestMetadata(next http.Handler) http.Handler {
 
 func readMCPRequestMetadata(r *http.Request) (string, string) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxMCPMetadataBodyBytes+1))
+	r.Body = io.NopCloser(bytes.NewReader(body))
 	if err != nil {
 		return "", ""
 	}
-	r.Body = io.NopCloser(bytes.NewReader(body))
 	if int64(len(body)) > maxMCPMetadataBodyBytes {
 		return "", ""
 	}

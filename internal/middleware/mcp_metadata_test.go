@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -100,4 +101,43 @@ func TestMCPRequestMetadataSkipsUnknownLengthBodyWithoutTruncating(t *testing.T)
 	req.ContentLength = -1
 	req.Header.Set(HeaderInternalMCPMethod, "tools/list")
 	handler.ServeHTTP(httptest.NewRecorder(), req)
+}
+
+func TestMCPRequestMetadataRestoresPartialBodyAfterReadError(t *testing.T) {
+	t.Parallel()
+
+	const body = `{"jsonrpc":"2.0"`
+	handler := MCPRequestMetadata(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get(HeaderInternalMCPMethod); got != "" {
+			t.Fatalf("method = %q, want empty", got)
+		}
+		gotBody, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(gotBody) != body {
+			t.Fatalf("body = %q, want %q", string(gotBody), body)
+		}
+	}))
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", &errorReader{data: body})
+	req.ContentLength = int64(len(body))
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+}
+
+type errorReader struct {
+	data string
+	done bool
+}
+
+func (r *errorReader) Close() error {
+	return nil
+}
+
+func (r *errorReader) Read(p []byte) (int, error) {
+	if r.done {
+		return 0, io.EOF
+	}
+	r.done = true
+	return copy(p, r.data), errors.New("read failed")
 }
