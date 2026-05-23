@@ -18,6 +18,7 @@ import (
 
 	"github.com/garrettladley/pkgsite-mcp/internal/config"
 	"github.com/garrettladley/pkgsite-mcp/internal/mcpserver"
+	"github.com/garrettladley/pkgsite-mcp/internal/middleware"
 	"github.com/garrettladley/pkgsite-mcp/internal/pkgsite"
 	"github.com/garrettladley/pkgsite-mcp/internal/version"
 )
@@ -61,7 +62,11 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		return err
 	}
 	defer flushSentry()
-	handler = securityHeaders(logging(logger, recovery(handler)))
+	handler = middleware.Chain(
+		securityHeaders,
+		logging(logger),
+		recovery,
+	)(handler)
 
 	baseCtx, cancelBase := context.WithCancel(ctx)
 	defer cancelBase()
@@ -128,18 +133,20 @@ func handlerWithSentry(next http.Handler, cfg config.Sentry, logger *slog.Logger
 	}, nil
 }
 
-func logging(logger *slog.Logger, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(rec, r)
-		logger.InfoContext(r.Context(), "http request",
-			slog.String("method", r.Method),
-			slog.String("path", r.URL.Path),
-			slog.Int("status", rec.status),
-			slog.Duration("duration", time.Since(start)),
-		)
-	})
+func logging(logger *slog.Logger) middleware.Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+			next.ServeHTTP(rec, r)
+			logger.InfoContext(r.Context(), "http request",
+				slog.String("method", r.Method),
+				slog.String("path", r.URL.Path),
+				slog.Int("status", rec.status),
+				slog.Duration("duration", time.Since(start)),
+			)
+		})
+	}
 }
 
 func recovery(next http.Handler) http.Handler {
