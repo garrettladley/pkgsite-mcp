@@ -18,7 +18,6 @@ import (
 	"github.com/garrettladley/pkgsite-mcp/internal/observability"
 	"github.com/garrettladley/pkgsite-mcp/internal/pkgsiteapi"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -62,33 +61,33 @@ func (d *CachedDoer) Do(req *http.Request) (*http.Response, error) {
 	}
 
 	ctx, span := observability.Tracer("pkgsite-cache").Start(req.Context(), "pkgsite.cache lookup",
-		trace.WithAttributes(
-			attribute.String("http.request.method", req.Method),
-			attribute.String("url.path", req.URL.EscapedPath()),
-		),
+		trace.WithAttributes(observability.CacheLookupAttrs{Method: req.Method, URL: req.URL}.Attributes()...),
 	)
 	defer span.End()
 	req = req.WithContext(ctx)
 	start := time.Now()
 	key := cacheKey(req)
-	span.SetAttributes(attribute.String("cache.key_hash", strings.TrimPrefix(key, "pkgsite:v1beta:http:")))
+	keyHash := strings.TrimPrefix(key, "pkgsite:v1beta:http:")
 	cached, err := d.store.Get(req.Context(), key)
 	switch {
 	case err == nil:
 		observability.RecordCacheLookup(req.Context(), observability.CacheOutcomeHit, time.Since(start))
-		span.SetAttributes(attribute.Bool("cache.hit", true))
+		span.SetAttributes(observability.CacheLookupAttrs{Method: req.Method, URL: req.URL, Outcome: observability.CacheOutcomeHit, KeyHash: keyHash}.Attributes()...)
 		return cachedHTTPResponse(req, cached), nil
 	case !errors.Is(err, kv.ErrNotFound):
 		observability.RecordCacheLookup(req.Context(), observability.CacheOutcomeError, time.Since(start))
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
+		span.SetAttributes(observability.CacheLookupAttrs{Method: req.Method, URL: req.URL, Outcome: observability.CacheOutcomeError, KeyHash: keyHash}.Attributes()...)
 	default:
 		observability.RecordCacheLookup(req.Context(), observability.CacheOutcomeMiss, time.Since(start))
-		span.SetAttributes(attribute.Bool("cache.hit", false))
+		span.SetAttributes(observability.CacheLookupAttrs{Method: req.Method, URL: req.URL, Outcome: observability.CacheOutcomeMiss, KeyHash: keyHash}.Attributes()...)
 	}
 
 	resp, err := d.client.Do(req)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
 	body, readErr := io.ReadAll(resp.Body)
@@ -98,7 +97,9 @@ func (d *CachedDoer) Do(req *http.Request) (*http.Response, error) {
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 
-	if ttl := cacheTTL(req.URL, resp.StatusCode); ttl > 0 {
+	ttl := cacheTTL(req.URL, resp.StatusCode)
+	writeOutcome := observability.CacheWriteOutcomeSkipped
+	if ttl > 0 {
 		record := cachedResponse{
 			StatusCode: resp.StatusCode,
 			Status:     resp.Status,
@@ -108,14 +109,25 @@ func (d *CachedDoer) Do(req *http.Request) (*http.Response, error) {
 		if encoded, err := json.Marshal(record); err == nil {
 			err = d.store.Set(req.Context(), key, encoded, ttl)
 			observability.RecordCacheWrite(req.Context(), err == nil)
+			writeOutcome = observability.CacheWriteOutcomeFromOK(err == nil)
 			if err != nil {
 				span.RecordError(err)
 			}
 		} else {
 			observability.RecordCacheWrite(req.Context(), false)
+			writeOutcome = observability.CacheWriteOutcomeError
 			span.RecordError(err)
 		}
 	}
+	span.SetAttributes(observability.CacheLookupAttrs{
+		Method:       req.Method,
+		URL:          req.URL,
+		Outcome:      observability.CacheOutcomeMiss,
+		KeyHash:      keyHash,
+		TTL:          ttl,
+		StatusCode:   resp.StatusCode,
+		WriteOutcome: writeOutcome,
+	}.Attributes()...)
 	return resp, nil
 }
 

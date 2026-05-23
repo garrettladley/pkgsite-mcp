@@ -443,8 +443,10 @@ func TestAsyncWarmerSuppressesRecursiveWarming(t *testing.T) {
 	}, WithWarmer(warmer))
 
 	async := NewAsyncWarmer(client, AsyncWarmerOptions{Concurrency: 1, RequestTimeout: time.Second})
-	if err := async.run(withoutWarming(t.Context()), WarmJob{Kind: WarmPackage, Package: PackageInput{PackagePath: "example.com/pkg"}}); err != nil {
+	if outcome, err := async.run(withoutWarming(t.Context()), WarmJob{Kind: WarmPackage, Package: PackageInput{PackagePath: "example.com/pkg"}}); err != nil {
 		t.Fatalf("warm run returned error: %v", err)
+	} else if outcome != "success" {
+		t.Fatalf("warm run outcome = %q, want success", outcome)
 	}
 	assertWarmJobs(t, warmer.jobs(), nil)
 }

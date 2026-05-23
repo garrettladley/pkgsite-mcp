@@ -4,6 +4,9 @@ import (
 	"context"
 	"time"
 
+	"github.com/garrettladley/pkgsite-mcp/internal/observability"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -59,6 +62,7 @@ func (w *AsyncWarmer) Warm(ctx context.Context, jobs ...WarmJob) {
 	if w == nil || w.client == nil || len(jobs) == 0 {
 		return
 	}
+	trace.SpanFromContext(ctx).SetAttributes(observability.WarmAttrs{QueueCount: len(jobs), Outcome: observability.WarmOutcomeScheduled}.Attributes()...)
 	copied := append([]WarmJob(nil), jobs...)
 	base := context.WithoutCancel(ctx)
 	go func() {
@@ -68,7 +72,15 @@ func (w *AsyncWarmer) Warm(ctx context.Context, jobs ...WarmJob) {
 			group.Go(func() error {
 				jobCtx, cancel := context.WithTimeout(groupCtx, w.opts.RequestTimeout)
 				defer cancel()
-				return w.run(withoutWarming(jobCtx), job)
+				jobCtx, span := observability.Tracer("pkgsite-warm").Start(jobCtx, "pkgsite.warm "+string(job.Kind), trace.WithAttributes(observability.WarmAttrs{Kind: string(job.Kind), Drain: job.Drain}.Attributes()...))
+				defer span.End()
+				outcome, err := w.run(withoutWarming(jobCtx), job)
+				if err != nil {
+					span.RecordError(err)
+					span.SetStatus(codes.Error, err.Error())
+				}
+				span.SetAttributes(observability.WarmAttrs{Kind: string(job.Kind), Drain: job.Drain, Outcome: outcome}.Attributes()...)
+				return err
 			})
 		}
 		_ = group.Wait()
@@ -82,31 +94,47 @@ const (
 	warmStateDone
 )
 
-func (w *AsyncWarmer) run(ctx context.Context, job WarmJob) error {
+func (w *AsyncWarmer) run(ctx context.Context, job WarmJob) (observability.WarmOutcome, error) {
+	if !validWarmKind(job.Kind) {
+		return observability.WarmOutcomeUnknownKind, nil
+	}
+	outcome := observability.WarmOutcomeSuccess
 	state := warmStateFetch
 	for state != warmStateDone {
-		next, err := w.step(ctx, &job)
+		next, nextOutcome, err := w.step(ctx, &job)
 		if err != nil {
-			return err
+			return observability.WarmOutcomeTransportError, err
+		}
+		if nextOutcome != "" {
+			outcome = nextOutcome
 		}
 		state = next
+		if next == warmStateDone {
+			return outcome, nil
+		}
 	}
-	return nil
+	return outcome, nil
 }
 
-func (w *AsyncWarmer) step(ctx context.Context, job *WarmJob) (warmState, error) {
+func (w *AsyncWarmer) step(ctx context.Context, job *WarmJob) (warmState, observability.WarmOutcome, error) {
 	result, err := w.fetch(ctx, *job)
-	if err != nil || result.Error != nil || !job.Drain {
-		return warmStateDone, err
+	if err != nil {
+		return warmStateDone, observability.WarmOutcomeTransportError, err
+	}
+	if result.Error != nil {
+		return warmStateDone, observability.WarmOutcomeAPIError, nil
+	}
+	if !job.Drain {
+		return warmStateDone, observability.WarmOutcomeSuccess, nil
 	}
 	token, _ := result.Pagination["upstreamNextPageToken"].(string)
 	if token == "" {
-		return warmStateDone, nil
+		return warmStateDone, observability.WarmOutcomeSuccess, nil
 	}
 	if !job.setToken(token) {
-		return warmStateDone, nil
+		return warmStateDone, observability.WarmOutcomeSkipped, nil
 	}
-	return warmStateFetch, nil
+	return warmStateFetch, "", nil
 }
 
 func (w *AsyncWarmer) fetch(ctx context.Context, job WarmJob) (Result, error) {
@@ -123,6 +151,15 @@ func (w *AsyncWarmer) fetch(ctx context.Context, job WarmJob) (Result, error) {
 		return w.client.Vulns(ctx, job.Vulns)
 	default:
 		return Result{}, nil
+	}
+}
+
+func validWarmKind(kind WarmKind) bool {
+	switch kind {
+	case WarmPackage, WarmPackages, WarmSymbols, WarmVersions, WarmVulns:
+		return true
+	default:
+		return false
 	}
 }
 

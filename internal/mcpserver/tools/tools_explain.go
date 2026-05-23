@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/garrettladley/pkgsite-mcp/internal/observability"
 	"github.com/garrettladley/pkgsite-mcp/internal/pkgsite"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -33,10 +33,6 @@ func (s *service) explain(ctx context.Context, _ *mcp.CallToolRequest, input pkg
 	vulns, err := s.client.Vulns(ctx, pkgsite.VulnsInput{Path: input.Path, ModulePath: input.ModulePath, Version: input.Version})
 	parts.Vulns = explainSubResultFromResult(vulns, err)
 	data := buildExplainPayload(input, parts)
-	trace.SpanFromContext(ctx).SetAttributes(
-		attribute.String("pkgsite.path", input.Path),
-		attribute.String("pkgsite.module_path", input.ModulePath),
-		attribute.String("pkgsite.version", input.Version),
-	)
+	trace.SpanFromContext(ctx).SetAttributes(observability.ToolAttrs{ToolName: toolNameExplain, LookupKind: "explain", Path: input.Path, ModulePath: input.ModulePath, VersionRequested: input.Version}.Attributes()...)
 	return textResult(singleEnvelope(data, envelopeOptions{Source: pkgsite.DefaultBaseURL, ToolName: toolNameExplain})), nil, nil
 }

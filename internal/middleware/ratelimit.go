@@ -14,7 +14,9 @@ import (
 
 	"github.com/garrettladley/pkgsite-mcp/internal/config"
 	"github.com/garrettladley/pkgsite-mcp/internal/kv"
+	"github.com/garrettladley/pkgsite-mcp/internal/observability"
 	"github.com/garrettladley/pkgsite-mcp/internal/xhttp"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func RateLimit(store kv.Store, cfg config.RateLimit, logger *slog.Logger) Middleware {
@@ -27,6 +29,7 @@ func RateLimit(store kv.Store, cfg config.RateLimit, logger *slog.Logger) Middle
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/mcp" {
+				trace.SpanFromContext(r.Context()).SetAttributes(observability.RateLimitAttrs{Outcome: observability.RateLimitOutcomeSkipped, Limit: cfg.Requests, Window: cfg.Window}.Attributes()...)
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -36,6 +39,7 @@ func RateLimit(store kv.Store, cfg config.RateLimit, logger *slog.Logger) Middle
 			key := rateLimitKey(ip, cfg.Window, now)
 			count, err := store.Increment(r.Context(), key, cfg.Window+time.Second)
 			if err != nil {
+				trace.SpanFromContext(r.Context()).SetAttributes(observability.RateLimitAttrs{Outcome: observability.RateLimitOutcomeStoreError, Limit: cfg.Requests, Window: cfg.Window}.Attributes()...)
 				logger.ErrorContext(r.Context(), "rate limit check failed", slog.Any("error", err), slog.String("client_ip", ip))
 				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 				return
@@ -45,10 +49,12 @@ func RateLimit(store kv.Store, cfg config.RateLimit, logger *slog.Logger) Middle
 			w.Header().Set(xhttp.HeaderXRateLimitRemaining, strconv.FormatInt(remaining, 10))
 			w.Header().Set(xhttp.HeaderXRateLimitReset, strconv.FormatInt(reset.Unix(), 10))
 			if count > int64(cfg.Requests) {
+				trace.SpanFromContext(r.Context()).SetAttributes(observability.RateLimitAttrs{Outcome: observability.RateLimitOutcomeLimited, RemainingBucket: observability.RemainingBucket(remaining, cfg.Requests), Limit: cfg.Requests, Window: cfg.Window}.Attributes()...)
 				w.Header().Set(xhttp.HeaderRetryAfter, strconv.Itoa(retryAfterSeconds(reset, now)))
 				http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
 				return
 			}
+			trace.SpanFromContext(r.Context()).SetAttributes(observability.RateLimitAttrs{Outcome: observability.RateLimitOutcomeAllowed, RemainingBucket: observability.RemainingBucket(remaining, cfg.Requests), Limit: cfg.Requests, Window: cfg.Window}.Attributes()...)
 			next.ServeHTTP(w, r)
 		})
 	}
