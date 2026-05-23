@@ -43,6 +43,8 @@ type AsyncWarmer struct {
 	opts   AsyncWarmerOptions
 }
 
+var _ Warmer = (*AsyncWarmer)(nil)
+
 func NewAsyncWarmer(client *Client, opts AsyncWarmerOptions) *AsyncWarmer {
 	if opts.Concurrency <= 0 {
 		opts.Concurrency = 2
