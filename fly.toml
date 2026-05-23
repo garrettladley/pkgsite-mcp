@@ -9,7 +9,7 @@ primary_region = 'iad'
 
 [env]
   PKGSITE_BASE_URL = 'https://pkg.go.dev/v1beta'
-  PKGSITE_CACHE_DISABLED = 'true'
+  PKGSITE_CACHE_DISABLED = 'false'
 
 [http_service]
   internal_port = 8080
