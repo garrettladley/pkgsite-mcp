@@ -71,10 +71,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	mux.Handle("POST /mcp", mcpHandler)
 	mux.Handle("GET /mcp", mcpHandler)
 	mux.Handle("DELETE /mcp", mcpHandler)
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"status":"ok","version":%q}`+"\n", version.Version)
-	})
+	mux.HandleFunc("GET /health", health)
 
 	handler := middleware.Chain(
 		middleware.SecurityHeaders,
@@ -111,7 +108,11 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.InfoContext(ctx, "starting pkgsite-mcp http server", slog.String("addr", cfg.Addr), slog.String("version", version.Version))
+		attrs := []any{slog.String("addr", cfg.Addr), slog.String("version", version.Release())}
+		if commit := version.ShortCommit(); commit != "" {
+			attrs = append(attrs, slog.String("commit", version.Commit))
+		}
+		logger.InfoContext(ctx, "starting pkgsite-mcp http server", attrs...)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
@@ -139,11 +140,17 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 func observabilityOptions(cfg config.Observability) observability.Options {
 	return observability.Options{
 		ServiceName:      cfg.ServiceName,
-		ServiceVersion:   version.Version,
+		ServiceVersion:   version.Release(),
+		ServiceRevision:  version.Commit,
 		Environment:      cfg.Environment,
 		FlushTimeout:     cfg.FlushTimeout,
 		TracesSampleRate: cfg.TracesSampleRate,
 		EnableLogs:       cfg.EnableLogs,
 		EnableMetrics:    cfg.EnableMetrics,
 	}
+}
+
+func health(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = fmt.Fprintln(w, `{"status":"ok"}`)
 }

@@ -31,7 +31,7 @@ func main() {
 			log.Fatal(err)
 		}
 	case "version":
-		fmt.Println(version.Version)
+		fmt.Println(version.CommandOutput())
 	case "fetch-openapi":
 		if err := fetchOpenAPI(os.Args[2:]); err != nil {
 			log.Fatal(err)
