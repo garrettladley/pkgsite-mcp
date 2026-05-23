@@ -58,9 +58,14 @@ func (b Backend) Start(ctx context.Context, opts observability.Options, _ *slog.
 	}
 	if opts.EnableLogs {
 		handle.logHandler = sentryslog.Option{
-			EventLevel: []slog.Level{slog.LevelError, sentryslog.LevelFatal},
-			LogLevel:   []slog.Level{slog.LevelInfo, slog.LevelWarn},
-			AddSource:  true,
+			LogLevel: []slog.Level{
+				slog.LevelDebug,
+				slog.LevelInfo,
+				slog.LevelWarn,
+				slog.LevelError,
+				sentryslog.LevelFatal,
+			},
+			AddSource: true,
 		}.NewSentryHandler(ctx)
 	}
 	if opts.EnableMetrics {
