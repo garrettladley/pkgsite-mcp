@@ -20,6 +20,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/sync/singleflight"
 )
 
 const CacheHitHeader = "X-Pkgsite-Mcp-Cache-Hit"
@@ -28,6 +29,7 @@ type CachedDoer struct {
 	client *http.Client
 	store  kv.Store
 	off    bool
+	group  singleflight.Group
 }
 
 var _ pkgsiteapi.HttpRequestDoer = (*CachedDoer)(nil)
@@ -80,55 +82,75 @@ func (d *CachedDoer) Do(req *http.Request) (*http.Response, error) {
 		span.SetStatus(codes.Error, err.Error())
 		span.SetAttributes(observability.CacheLookupAttrs{Method: req.Method, URL: req.URL, Outcome: observability.CacheOutcomeError, KeyHash: keyHash}.Attributes()...)
 	default:
-		observability.RecordCacheLookup(req.Context(), observability.CacheOutcomeMiss, time.Since(start))
 		span.SetAttributes(observability.CacheLookupAttrs{Method: req.Method, URL: req.URL, Outcome: observability.CacheOutcomeMiss, KeyHash: keyHash}.Attributes()...)
 	}
 
-	resp, err := d.client.Do(req)
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return nil, err
-	}
-	body, readErr := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if readErr != nil {
-		return nil, readErr
-	}
-	resp.Body = io.NopCloser(bytes.NewReader(body))
+	leader := false
+	v, err, shared := d.group.Do(key, func() (any, error) {
+		leader = true
+		resp, err := d.client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
 
-	ttl := cacheTTL(req.URL, resp.StatusCode)
-	writeOutcome := observability.CacheWriteOutcomeSkipped
-	if ttl > 0 {
-		record := cachedResponse{
+		rec := &cachedResponse{
 			StatusCode: resp.StatusCode,
 			Status:     resp.Status,
 			Header:     resp.Header.Clone(),
 			Body:       body,
 		}
-		if encoded, err := json.Marshal(record); err == nil {
-			err = d.store.Set(req.Context(), key, encoded, ttl)
-			observability.RecordCacheWrite(req.Context(), err == nil)
-			writeOutcome = observability.CacheWriteOutcomeFromOK(err == nil)
-			if err != nil {
-				span.RecordError(err)
+
+		ttl := cacheTTL(req.URL, resp.StatusCode)
+		writeOutcome := observability.CacheWriteOutcomeSkipped
+		if ttl > 0 {
+			if encoded, mErr := json.Marshal(rec); mErr == nil {
+				sErr := d.store.Set(req.Context(), key, encoded, ttl)
+				observability.RecordCacheWrite(req.Context(), sErr == nil)
+				writeOutcome = observability.CacheWriteOutcomeFromOK(sErr == nil)
+				if sErr != nil {
+					span.RecordError(sErr)
+				}
+			} else {
+				observability.RecordCacheWrite(req.Context(), false)
+				writeOutcome = observability.CacheWriteOutcomeError
+				span.RecordError(mErr)
 			}
-		} else {
-			observability.RecordCacheWrite(req.Context(), false)
-			writeOutcome = observability.CacheWriteOutcomeError
-			span.RecordError(err)
 		}
+		span.SetAttributes(observability.CacheLookupAttrs{
+			Method:       req.Method,
+			URL:          req.URL,
+			KeyHash:      keyHash,
+			TTL:          ttl,
+			StatusCode:   rec.StatusCode,
+			WriteOutcome: writeOutcome,
+		}.Attributes()...)
+		return rec, nil
+	})
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
 	}
+
+	rec := v.(*cachedResponse)
+	outcome := observability.CacheOutcomeMiss
+	if shared && !leader {
+		outcome = observability.CacheOutcomeCoalesced
+	}
+	observability.RecordCacheLookup(req.Context(), outcome, time.Since(start))
 	span.SetAttributes(observability.CacheLookupAttrs{
-		Method:       req.Method,
-		URL:          req.URL,
-		Outcome:      observability.CacheOutcomeMiss,
-		KeyHash:      keyHash,
-		TTL:          ttl,
-		StatusCode:   resp.StatusCode,
-		WriteOutcome: writeOutcome,
+		Method:     req.Method,
+		URL:        req.URL,
+		Outcome:    outcome,
+		KeyHash:    keyHash,
+		StatusCode: rec.StatusCode,
 	}.Attributes()...)
-	return resp, nil
+	return responseFromRecord(req, rec), nil
 }
 
 func cachedHTTPResponse(req *http.Request, cached []byte) *http.Response {
@@ -155,6 +177,20 @@ func cachedHTTPResponse(req *http.Request, cached []byte) *http.Response {
 		},
 		Body:    io.NopCloser(bytes.NewReader(cached)),
 		Request: req,
+	}
+}
+
+func responseFromRecord(req *http.Request, rec *cachedResponse) *http.Response {
+	h := rec.Header.Clone()
+	if h == nil {
+		h = http.Header{}
+	}
+	return &http.Response{
+		StatusCode: rec.StatusCode,
+		Status:     rec.Status,
+		Header:     h,
+		Body:       io.NopCloser(bytes.NewReader(rec.Body)),
+		Request:    req,
 	}
 }
 
