@@ -9,16 +9,27 @@ import (
 
 type Config struct {
 	Port          string        `env:"PORT" envDefault:"8080"`
+	KV            KV            `envPrefix:"KV_"`
 	Observability Observability `envPrefix:"O11Y_"`
 	Pkgsite       Pkgsite       `envPrefix:"PKGSITE_"`
+	RateLimit     RateLimit     `envPrefix:"RATE_LIMIT_"`
 	Sentry        Sentry
 }
 
 type Pkgsite struct {
 	BaseURL       string        `env:"BASE_URL" envDefault:"https://pkg.go.dev/v1beta"`
 	HTTPTimeout   time.Duration `env:"HTTP_TIMEOUT" envDefault:"10s"`
-	RedisURL      string        `env:"REDIS_URL"`
 	CacheDisabled bool          `env:"CACHE_DISABLED" envDefault:"false"`
+}
+
+type KV struct {
+	RedisURL string `env:"REDIS_URL"`
+}
+
+type RateLimit struct {
+	Enabled  bool          `env:"ENABLED" envDefault:"true"`
+	Requests int           `env:"REQUESTS" envDefault:"120"`
+	Window   time.Duration `env:"WINDOW" envDefault:"1m"`
 }
 
 type Sentry struct {

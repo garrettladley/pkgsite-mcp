@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/garrettladley/pkgsite-mcp/internal/config"
+	"github.com/garrettladley/pkgsite-mcp/internal/kv"
 	"github.com/garrettladley/pkgsite-mcp/internal/observability"
 	sentryobs "github.com/garrettladley/pkgsite-mcp/internal/observability/sentry"
 	"github.com/garrettladley/pkgsite-mcp/internal/pkgsite"
@@ -41,7 +42,11 @@ func RunStdio(ctx context.Context) error {
 		}
 	}()
 
-	client, err := pkgsite.New(cfg.Pkgsite)
+	store, err := kv.NewStore(cfg.KV.RedisURL)
+	if err != nil {
+		return fmt.Errorf("configure kv store: %w", err)
+	}
+	client, err := pkgsite.New(cfg.Pkgsite, store)
 	if err != nil {
 		return err
 	}

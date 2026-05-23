@@ -246,7 +246,7 @@ func newFakeUpstreamClient(t *testing.T, handler func(*testing.T, http.ResponseW
 	client, err := New(config.Pkgsite{
 		BaseURL:       server.URL,
 		CacheDisabled: true,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
