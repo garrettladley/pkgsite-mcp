@@ -15,10 +15,19 @@ import (
 )
 
 type Client struct {
-	api *pkgsiteapi.ClientWithResponses
+	api    *pkgsiteapi.ClientWithResponses
+	warmer Warmer
 }
 
-func New(cfg config.Pkgsite, store kv.Store) (*Client, error) {
+type Option func(*Client)
+
+func WithWarmer(warmer Warmer) Option {
+	return func(c *Client) {
+		c.warmer = warmer
+	}
+}
+
+func New(cfg config.Pkgsite, store kv.Store, opts ...Option) (*Client, error) {
 	baseURL := strings.TrimSpace(cfg.BaseURL)
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
@@ -40,7 +49,14 @@ func New(cfg config.Pkgsite, store kv.Store) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{api: api}, nil
+	client := &Client{api: api}
+	for _, opt := range opts {
+		opt(client)
+	}
+	if client.warmer == nil && store != nil && !cfg.CacheDisabled {
+		client.warmer = NewAsyncWarmer(client, AsyncWarmerOptions{})
+	}
+	return client, nil
 }
 
 func (c *Client) Search(ctx context.Context, input SearchInput) (Result, error) {
@@ -59,14 +75,16 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (Result, error) 
 		return resultError(resp.StatusCode(), resp.Status(), resp.Body, resp.HTTPResponse), nil
 	}
 	items := paginatedItems(resp.JSON200)
-	return Result{
+	result := Result{
 		Summary:     map[string]any{"query": input.Query, "symbol": input.Symbol, "count": len(items)},
 		Items:       items,
 		Pagination:  pagination(resp.JSON200, len(items)),
 		Raw:         resp.JSON200,
 		UpstreamURL: requestURL(resp.HTTPResponse),
 		FromCache:   fromCache(resp.HTTPResponse),
-	}, nil
+	}
+	c.warmSearchResult(ctx, result)
+	return result, nil
 }
 
 func (c *Client) Module(ctx context.Context, input ModuleInput) (Result, error) {
@@ -83,14 +101,16 @@ func (c *Client) Module(ctx context.Context, input ModuleInput) (Result, error) 
 		return resultError(resp.StatusCode(), resp.Status(), resp.Body, resp.HTTPResponse), nil
 	}
 	module := resp.JSON200
-	return Result{
+	result := Result{
 		Summary: map[string]any{
 			"kind": "module", "path": stringVal(module.Path, input.ModulePath), "version": stringVal(module.Version, input.Version),
 			"isLatest": boolVal(module.IsLatest), "latest": boolVal(module.IsLatest), "repoUrl": stringVal(module.RepoUrl, ""),
 			"hasGoMod": boolVal(module.HasGoMod), "isRedistributable": boolVal(module.IsRedistributable), "isStandardLibrary": boolVal(module.IsStandardLibrary),
 		},
 		Raw: module, UpstreamURL: requestURL(resp.HTTPResponse), FromCache: fromCache(resp.HTTPResponse),
-	}, nil
+	}
+	c.warm(ctx, WarmJob{Kind: WarmPackages, Packages: PackagesInput{ModulePath: stringValue(result.Summary["path"], input.ModulePath), Version: stringValue(result.Summary["version"], input.Version)}, Drain: true})
+	return result, nil
 }
 
 func (c *Client) Package(ctx context.Context, input PackageInput) (Result, error) {
@@ -107,14 +127,16 @@ func (c *Client) Package(ctx context.Context, input PackageInput) (Result, error
 		return resultError(resp.StatusCode(), resp.Status(), resp.Body, resp.HTTPResponse), nil
 	}
 	pkg := resp.JSON200
-	return Result{
+	result := Result{
 		Summary: map[string]any{
 			"kind": "package", "path": input.PackagePath, "modulePath": stringVal(pkg.ModulePath, input.ModulePath),
 			"version": stringVal(pkg.Version, input.Version), "goos": stringVal(pkg.Goos, input.Goos), "goarch": stringVal(pkg.Goarch, input.Goarch),
 			"isLatest": boolVal(pkg.IsLatest), "isStandardLibrary": boolVal(pkg.IsStandardLibrary), "importCount": lenStringSlice(pkg.Imports),
 		},
 		Raw: pkg, UpstreamURL: requestURL(resp.HTTPResponse), FromCache: fromCache(resp.HTTPResponse),
-	}, nil
+	}
+	c.warm(ctx, WarmJob{Kind: WarmSymbols, Symbols: SymbolsInput{PackagePath: stringValue(result.Summary["path"], input.PackagePath), ModulePath: stringValue(result.Summary["modulePath"], input.ModulePath), Version: stringValue(result.Summary["version"], input.Version)}, Drain: true})
+	return result, nil
 }
 
 func (c *Client) Versions(ctx context.Context, input VersionsInput) (Result, error) {
@@ -191,6 +213,32 @@ func (c *Client) Vulns(ctx context.Context, input VulnsInput) (Result, error) {
 	return Result{Summary: map[string]any{"kind": "vulnerabilities", "path": input.Path, "modulePath": input.ModulePath, "version": input.Version, "count": len(items)}, Items: items, Pagination: pagination(resp.JSON200, len(items)), Raw: resp.JSON200, UpstreamURL: requestURL(resp.HTTPResponse), FromCache: fromCache(resp.HTTPResponse)}, nil
 }
 
+func (c *Client) warm(ctx context.Context, jobs ...WarmJob) {
+	if c.warmer == nil || warmingDisabled(ctx) {
+		return
+	}
+	c.warmer.Warm(ctx, jobs...)
+}
+
+func (c *Client) warmSearchResult(ctx context.Context, result Result) {
+	if len(result.Items) != 1 {
+		return
+	}
+	item := result.Items[0]
+	path := stringValue(item["path"], "")
+	if path == "" {
+		return
+	}
+	c.warm(ctx, WarmJob{
+		Kind: WarmPackage,
+		Package: PackageInput{
+			PackagePath: path,
+			ModulePath:  stringValue(item["modulePath"], ""),
+			Version:     stringValue(item["version"], ""),
+		},
+	})
+}
+
 func resultError(statusCode int, status string, body []byte, resp *http.Response) Result {
 	var raw json.RawMessage
 	if json.Valid(body) {
@@ -250,6 +298,13 @@ func stringVal(v *string, fallback string) string {
 		return fallback
 	}
 	return *v
+}
+
+func stringValue(v any, fallback string) string {
+	if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+		return s
+	}
+	return fallback
 }
 
 func boolVal(v *bool) bool {
