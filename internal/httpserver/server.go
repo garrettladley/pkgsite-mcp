@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -81,13 +82,9 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		middleware.RateLimit(store, cfg.RateLimit, logger),
 	)(mux)
 	handler = otelhttp.NewHandler(handler, "http.server",
-		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
-			if r.Pattern != "" {
-				return r.Method + " " + r.Pattern
-			}
-			return r.Method + " " + r.URL.Path
-		}),
+		otelhttp.WithSpanNameFormatter(httpSpanName),
 	)
+	handler = middleware.MCPRequestMetadata(handler)
 
 	baseCtx, cancelBase := context.WithCancel(ctx)
 	defer cancelBase()
@@ -148,6 +145,24 @@ func observabilityOptions(cfg config.Observability) observability.Options {
 		EnableLogs:       cfg.EnableLogs,
 		EnableMetrics:    cfg.EnableMetrics,
 	}
+}
+
+func httpSpanName(_ string, r *http.Request) string {
+	name := r.Method + " " + r.URL.Path
+	if r.Pattern != "" {
+		if strings.HasPrefix(r.Pattern, r.Method+" ") {
+			name = r.Pattern
+		} else {
+			name = r.Method + " " + r.Pattern
+		}
+	}
+	if method := r.Header.Get(middleware.HeaderInternalMCPMethod); method != "" {
+		name += " " + method
+		if mcpName := r.Header.Get(middleware.HeaderInternalMCPName); mcpName != "" {
+			name += " " + mcpName
+		}
+	}
+	return name
 }
 
 func health(w http.ResponseWriter, _ *http.Request) {
