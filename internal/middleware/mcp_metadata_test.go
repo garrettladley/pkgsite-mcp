@@ -60,3 +60,44 @@ func TestMCPRequestMetadataSkipsNonMCPRequest(t *testing.T) {
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/other", strings.NewReader(`{"method":"tools/list"}`))
 	handler.ServeHTTP(httptest.NewRecorder(), req)
 }
+
+func TestMCPRequestMetadataClearsCallerSuppliedInternalHeaders(t *testing.T) {
+	t.Parallel()
+
+	handler := MCPRequestMetadata(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get(HeaderInternalMCPMethod); got != "" {
+			t.Fatalf("method = %q, want empty", got)
+		}
+		if got := r.Header.Get(HeaderInternalMCPName); got != "" {
+			t.Fatalf("name = %q, want empty", got)
+		}
+	}))
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/other", strings.NewReader(`{"method":"tools/list"}`))
+	req.Header.Set(HeaderInternalMCPMethod, "tools/call")
+	req.Header.Set(HeaderInternalMCPName, "pkgsite_search")
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+}
+
+func TestMCPRequestMetadataSkipsUnknownLengthBodyWithoutTruncating(t *testing.T) {
+	t.Parallel()
+
+	body := strings.Repeat("x", int(maxMCPMetadataBodyBytes)+1)
+	handler := MCPRequestMetadata(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get(HeaderInternalMCPMethod); got != "" {
+			t.Fatalf("method = %q, want empty", got)
+		}
+		gotBody, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(gotBody) != body {
+			t.Fatalf("body length = %d, want %d", len(gotBody), len(body))
+		}
+	}))
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", strings.NewReader(body))
+	req.ContentLength = -1
+	req.Header.Set(HeaderInternalMCPMethod, "tools/list")
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+}

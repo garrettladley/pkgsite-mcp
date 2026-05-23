@@ -24,7 +24,10 @@ type mcpJSONRPCRequest struct {
 // instrumentation names the root server span.
 func MCPRequestMetadata(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && r.URL.Path == "/mcp" && r.Body != nil && r.ContentLength <= maxMCPMetadataBodyBytes {
+		r.Header.Del(HeaderInternalMCPMethod)
+		r.Header.Del(HeaderInternalMCPName)
+
+		if r.Method == http.MethodPost && r.URL.Path == "/mcp" && r.Body != nil && r.ContentLength >= 0 && r.ContentLength <= maxMCPMetadataBodyBytes {
 			method, name := readMCPRequestMetadata(r)
 			if method != "" {
 				r.Header.Set(HeaderInternalMCPMethod, method)
