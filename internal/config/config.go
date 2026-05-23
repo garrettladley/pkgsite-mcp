@@ -10,6 +10,7 @@ import (
 type Config struct {
 	Port    string  `env:"PORT" envDefault:"8080"`
 	Pkgsite Pkgsite `envPrefix:"PKGSITE_"`
+	Sentry  Sentry
 }
 
 type Pkgsite struct {
@@ -17,6 +18,10 @@ type Pkgsite struct {
 	HTTPTimeout   time.Duration `env:"HTTP_TIMEOUT" envDefault:"10s"`
 	RedisURL      string        `env:"REDIS_URL"`
 	CacheDisabled bool          `env:"CACHE_DISABLED" envDefault:"false"`
+}
+
+type Sentry struct {
+	DSN string `env:"SENTRY_DSN"`
 }
 
 func Read() (Config, error) {

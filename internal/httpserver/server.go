@@ -9,8 +9,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
+
+	"github.com/getsentry/sentry-go"
+	sentryhttp "github.com/getsentry/sentry-go/http"
 
 	"github.com/garrettladley/pkgsite-mcp/internal/config"
 	"github.com/garrettladley/pkgsite-mcp/internal/mcpserver"
@@ -21,6 +25,7 @@ import (
 type Config struct {
 	Addr    string
 	Pkgsite config.Pkgsite
+	Sentry  config.Sentry
 }
 
 func ConfigFromEnv(addr string) (Config, error) {
@@ -28,7 +33,7 @@ func ConfigFromEnv(addr string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	return Config{Addr: cfg.HTTPAddr(addr), Pkgsite: cfg.Pkgsite}, nil
+	return Config{Addr: cfg.HTTPAddr(addr), Pkgsite: cfg.Pkgsite, Sentry: cfg.Sentry}, nil
 }
 
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
@@ -51,7 +56,13 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		_, _ = fmt.Fprintf(w, `{"status":"ok","version":%q}`+"\n", version.Version)
 	})
 
-	handler := securityHeaders(logging(logger, recovery(mux)))
+	handler, flushSentry, err := handlerWithSentry(mux, cfg.Sentry, logger)
+	if err != nil {
+		return err
+	}
+	defer flushSentry()
+	handler = securityHeaders(logging(logger, recovery(handler)))
+
 	baseCtx, cancelBase := context.WithCancel(ctx)
 	defer cancelBase()
 
@@ -94,6 +105,27 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		return fmt.Errorf("shutdown http server: %w", err)
 	}
 	return <-errCh
+}
+
+func handlerWithSentry(next http.Handler, cfg config.Sentry, logger *slog.Logger) (http.Handler, func(), error) {
+	dsn := strings.TrimSpace(cfg.DSN)
+	if dsn == "" {
+		return next, func() {}, nil
+	}
+	if err := sentry.Init(sentry.ClientOptions{
+		Dsn:     dsn,
+		Release: version.Version,
+	}); err != nil {
+		return nil, nil, fmt.Errorf("initialize sentry: %w", err)
+	}
+	logger.Info("sentry initialized")
+	sentryHandler := sentryhttp.New(sentryhttp.Options{
+		Repanic:         true,
+		WaitForDelivery: false,
+	})
+	return sentryHandler.Handle(next), func() {
+		sentry.Flush(2 * time.Second)
+	}, nil
 }
 
 func logging(logger *slog.Logger, next http.Handler) http.Handler {

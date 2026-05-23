@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/caarlos0/env/v11 v11.3.1
+	github.com/getsentry/sentry-go v0.46.2
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/oapi-codegen/runtime v1.4.1
 	github.com/redis/go-redis/v9 v9.19.0
@@ -20,4 +21,5 @@ require (
 	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/text v0.32.0 // indirect
 )
