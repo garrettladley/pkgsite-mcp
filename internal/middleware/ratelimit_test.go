@@ -1,0 +1,116 @@
+package middleware
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/garrettladley/pkgsite-mcp/internal/config"
+	"github.com/garrettladley/pkgsite-mcp/internal/kv"
+	"github.com/garrettladley/pkgsite-mcp/internal/xhttp"
+)
+
+func TestRateLimitAllowsWithinLimit(t *testing.T) {
+	t.Parallel()
+
+	store := incrementFunc(func(context.Context, string, time.Duration) (int64, error) {
+		return 2, nil
+	})
+	handler := RateLimit(store, config.RateLimit{Enabled: true, Requests: 2, Window: time.Minute}, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, requestWithIP(t, "203.0.113.10:1234"))
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if got := rec.Header().Get(xhttp.HeaderXRateLimitRemaining); got != "0" {
+		t.Fatalf("remaining = %q, want 0", got)
+	}
+}
+
+func TestRateLimitRejectsOverLimit(t *testing.T) {
+	t.Parallel()
+
+	store := incrementFunc(func(context.Context, string, time.Duration) (int64, error) {
+		return 3, nil
+	})
+	handler := RateLimit(store, config.RateLimit{Enabled: true, Requests: 2, Window: time.Minute}, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, requestWithIP(t, "203.0.113.10:1234"))
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusTooManyRequests)
+	}
+	retryAfter, err := strconv.Atoi(rec.Header().Get(xhttp.HeaderRetryAfter))
+	if err != nil {
+		t.Fatalf("Retry-After is not an integer: %q", rec.Header().Get(xhttp.HeaderRetryAfter))
+	}
+	if retryAfter < 1 || retryAfter > 60 {
+		t.Fatalf("Retry-After = %d, want 1..60", retryAfter)
+	}
+}
+
+func TestRateLimitFailsClosedOnStoreError(t *testing.T) {
+	t.Parallel()
+
+	store := incrementFunc(func(context.Context, string, time.Duration) (int64, error) {
+		return 0, errors.New("redis down")
+	})
+	handler := RateLimit(store, config.RateLimit{Enabled: true, Requests: 2, Window: time.Minute}, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, requestWithIP(t, "203.0.113.10:1234"))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestClientIPPrefersFlyHeaderAndNormalizes(t *testing.T) {
+	t.Parallel()
+
+	req := requestWithIP(t, "198.51.100.10:1234")
+	req.Header.Set(xhttp.HeaderFlyClientIP, "::ffff:203.0.113.9")
+	req.Header.Set(xhttp.HeaderXForwardedFor, "192.0.2.1, 198.51.100.10")
+
+	if got := clientIP(req); got != "203.0.113.9" {
+		t.Fatalf("clientIP = %q, want 203.0.113.9", got)
+	}
+}
+
+func requestWithIP(t *testing.T, remoteAddr string) *http.Request {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://example.test/mcp", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.RemoteAddr = remoteAddr
+	return req
+}
+
+type incrementFunc func(context.Context, string, time.Duration) (int64, error)
+
+func (f incrementFunc) Get(context.Context, string) ([]byte, error) {
+	return nil, kv.ErrNotFound
+}
+
+func (f incrementFunc) Set(context.Context, string, []byte, time.Duration) error {
+	return nil
+}
+
+func (f incrementFunc) Increment(ctx context.Context, key string, ttl time.Duration) (int64, error) {
+	return f(ctx, key, ttl)
+}

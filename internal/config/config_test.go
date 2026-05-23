@@ -29,11 +29,20 @@ func TestReadDefaults(t *testing.T) {
 	if got.Pkgsite.HTTPTimeout != 10*time.Second {
 		t.Fatalf("HTTPTimeout = %s, want 10s", got.Pkgsite.HTTPTimeout)
 	}
-	if got.Pkgsite.RedisURL != "" {
-		t.Fatalf("RedisURL = %q, want empty", got.Pkgsite.RedisURL)
+	if got.KV.RedisURL != "" {
+		t.Fatalf("RedisURL = %q, want empty", got.KV.RedisURL)
 	}
 	if got.Pkgsite.CacheDisabled {
 		t.Fatal("CacheDisabled = true, want false")
+	}
+	if !got.RateLimit.Enabled {
+		t.Fatal("RateLimit.Enabled = false, want true")
+	}
+	if got.RateLimit.Requests != 120 {
+		t.Fatalf("RateLimit.Requests = %d, want 120", got.RateLimit.Requests)
+	}
+	if got.RateLimit.Window != time.Minute {
+		t.Fatalf("RateLimit.Window = %s, want 1m", got.RateLimit.Window)
 	}
 	if got.Observability.TracesSampleRate != 1.0 {
 		t.Fatalf("TracesSampleRate = %f, want 1.0", got.Observability.TracesSampleRate)
@@ -59,8 +68,11 @@ func TestReadOverrides(t *testing.T) {
 		"O11Y_ENABLE_METRICS":     "false",
 		"PKGSITE_BASE_URL":        "http://example.test",
 		"PKGSITE_HTTP_TIMEOUT":    "250ms",
-		"PKGSITE_REDIS_URL":       "redis://localhost:6379/0",
+		"KV_REDIS_URL":            "redis://localhost:6379/0",
 		"PKGSITE_CACHE_DISABLED":  "true",
+		"RATE_LIMIT_ENABLED":      "false",
+		"RATE_LIMIT_REQUESTS":     "10",
+		"RATE_LIMIT_WINDOW":       "30s",
 		"SENTRY_DSN":              "https://public@example.invalid/1",
 	}})
 	if err != nil {
@@ -90,14 +102,23 @@ func TestReadOverrides(t *testing.T) {
 	if got.Pkgsite.HTTPTimeout != 250*time.Millisecond {
 		t.Fatalf("HTTPTimeout = %s, want 250ms", got.Pkgsite.HTTPTimeout)
 	}
-	if got.Pkgsite.RedisURL != "redis://localhost:6379/0" {
-		t.Fatalf("RedisURL = %q, want override", got.Pkgsite.RedisURL)
+	if got.KV.RedisURL != "redis://localhost:6379/0" {
+		t.Fatalf("RedisURL = %q, want override", got.KV.RedisURL)
 	}
 	if !got.Pkgsite.CacheDisabled {
 		t.Fatal("CacheDisabled = false, want true")
 	}
 	if got.Sentry.DSN != "https://public@example.invalid/1" {
 		t.Fatalf("Sentry.DSN = %q, want override", got.Sentry.DSN)
+	}
+	if got.RateLimit.Enabled {
+		t.Fatal("RateLimit.Enabled = true, want false")
+	}
+	if got.RateLimit.Requests != 10 {
+		t.Fatalf("RateLimit.Requests = %d, want 10", got.RateLimit.Requests)
+	}
+	if got.RateLimit.Window != 30*time.Second {
+		t.Fatalf("RateLimit.Window = %s, want 30s", got.RateLimit.Window)
 	}
 	if got.Observability.TracesSampleRate != 0.25 {
 		t.Fatalf("TracesSampleRate = %f, want 0.25", got.Observability.TracesSampleRate)

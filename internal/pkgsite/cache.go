@@ -14,9 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/garrettladley/pkgsite-mcp/internal/kv"
 	"github.com/garrettladley/pkgsite-mcp/internal/observability"
-	"github.com/redis/go-redis/extra/redisotel/v9"
-	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -27,7 +26,7 @@ const cacheHitHeader = "X-Pkgsite-Mcp-Cache-Hit"
 
 type cachedDoer struct {
 	client *http.Client
-	redis  *redis.Client
+	store  kv.Store
 	off    bool
 }
 
@@ -49,27 +48,12 @@ func newHTTPClient(timeout time.Duration) *http.Client {
 	}
 }
 
-func newCachedDoer(httpClient *http.Client, redisURL string, disabled bool) (*cachedDoer, error) {
-	doer := &cachedDoer{client: httpClient, off: disabled || redisURL == ""}
-	if doer.off {
-		return doer, nil
-	}
-	opts, err := redis.ParseURL(redisURL)
-	if err != nil {
-		return nil, err
-	}
-	doer.redis = redis.NewClient(opts)
-	if err := redisotel.InstrumentTracing(doer.redis); err != nil {
-		return nil, err
-	}
-	if err := redisotel.InstrumentMetrics(doer.redis); err != nil {
-		return nil, err
-	}
-	return doer, nil
+func newCachedDoer(httpClient *http.Client, store kv.Store, disabled bool) *cachedDoer {
+	return &cachedDoer{client: httpClient, store: store, off: disabled || store == nil}
 }
 
 func (d *cachedDoer) Do(req *http.Request) (*http.Response, error) {
-	if req.Method != http.MethodGet || d.off || d.redis == nil {
+	if req.Method != http.MethodGet || d.off || d.store == nil {
 		observability.RecordCacheLookup(req.Context(), cacheBypassOutcome(req, d), 0)
 		return d.client.Do(req)
 	}
@@ -85,13 +69,13 @@ func (d *cachedDoer) Do(req *http.Request) (*http.Response, error) {
 	start := time.Now()
 	key := cacheKey(req)
 	span.SetAttributes(attribute.String("cache.key_hash", strings.TrimPrefix(key, "pkgsite:v1beta:http:")))
-	cached, err := d.redis.Get(req.Context(), key).Bytes()
+	cached, err := d.store.Get(req.Context(), key)
 	switch {
 	case err == nil:
 		observability.RecordCacheLookup(req.Context(), observability.CacheOutcomeHit, time.Since(start))
 		span.SetAttributes(attribute.Bool("cache.hit", true))
 		return cachedHTTPResponse(req, cached), nil
-	case !errors.Is(err, redis.Nil):
+	case !errors.Is(err, kv.ErrNotFound):
 		observability.RecordCacheLookup(req.Context(), observability.CacheOutcomeError, time.Since(start))
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -119,7 +103,7 @@ func (d *cachedDoer) Do(req *http.Request) (*http.Response, error) {
 			Body:       body,
 		}
 		if encoded, err := json.Marshal(record); err == nil {
-			err = d.redis.Set(req.Context(), key, encoded, ttl).Err()
+			err = d.store.Set(req.Context(), key, encoded, ttl)
 			observability.RecordCacheWrite(req.Context(), err == nil)
 			if err != nil {
 				span.RecordError(err)
@@ -163,7 +147,7 @@ func cacheBypassOutcome(req *http.Request, d *cachedDoer) observability.CacheOut
 	if req.Method != http.MethodGet {
 		return observability.CacheOutcomeBypass
 	}
-	if d.off || d.redis == nil {
+	if d.off || d.store == nil {
 		return observability.CacheOutcomeDisabled
 	}
 	return observability.CacheOutcomeBypass

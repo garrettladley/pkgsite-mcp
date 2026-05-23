@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/garrettladley/pkgsite-mcp/internal/config"
+	"github.com/garrettladley/pkgsite-mcp/internal/kv"
 	"github.com/garrettladley/pkgsite-mcp/internal/mcpserver"
 	"github.com/garrettladley/pkgsite-mcp/internal/middleware"
 	"github.com/garrettladley/pkgsite-mcp/internal/observability"
@@ -24,8 +25,10 @@ import (
 
 type Config struct {
 	Addr          string
+	KV            config.KV
 	Observability config.Observability
 	Pkgsite       config.Pkgsite
+	RateLimit     config.RateLimit
 	Sentry        config.Sentry
 }
 
@@ -34,7 +37,7 @@ func ConfigFromEnv(addr string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	return Config{Addr: cfg.HTTPAddr(addr), Observability: cfg.Observability, Pkgsite: cfg.Pkgsite, Sentry: cfg.Sentry}, nil
+	return Config{Addr: cfg.HTTPAddr(addr), KV: cfg.KV, Observability: cfg.Observability, Pkgsite: cfg.Pkgsite, RateLimit: cfg.RateLimit, Sentry: cfg.Sentry}, nil
 }
 
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
@@ -54,7 +57,11 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	}()
 	logger = obs.Logger
 
-	client, err := pkgsite.New(cfg.Pkgsite)
+	store, err := kv.NewStore(cfg.KV.RedisURL)
+	if err != nil {
+		return fmt.Errorf("configure kv store: %w", err)
+	}
+	client, err := pkgsite.New(cfg.Pkgsite, store)
 	if err != nil {
 		return fmt.Errorf("initialize pkgsite client: %w", err)
 	}
@@ -74,6 +81,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		obs.Middleware,
 		logging(logger),
 		recovery(obs),
+		middleware.RateLimit(store, cfg.RateLimit, logger),
 	)(mux)
 	handler = otelhttp.NewHandler(handler, "http.server",
 		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {

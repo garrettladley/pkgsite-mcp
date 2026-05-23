@@ -63,9 +63,12 @@ http://localhost:8080/mcp
 
 ```text
 PKGSITE_BASE_URL=https://pkg.go.dev/v1beta
-PKGSITE_REDIS_URL=redis://localhost:9736/0
+KV_REDIS_URL=redis://localhost:9736/0
 PKGSITE_HTTP_TIMEOUT=10s
 PKGSITE_CACHE_DISABLED=false
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_REQUESTS=120
+RATE_LIMIT_WINDOW=1m
 SENTRY_DSN=
 O11Y_SERVICE_NAME=pkgsite-mcp
 O11Y_ENVIRONMENT=
@@ -75,7 +78,7 @@ O11Y_ENABLE_LOGS=true
 O11Y_ENABLE_METRICS=true
 ```
 
-Redis is optional. Without `PKGSITE_REDIS_URL`, requests go directly to pkg.go.dev.
+Redis is optional. Without `KV_REDIS_URL`, requests go directly to pkg.go.dev and IP rate limiting is disabled. When Redis is configured, it backs both pkg.go.dev response caching and fixed-window IP rate limiting for `/mcp`.
 Sentry is optional. Without `SENTRY_DSN`, observability calls stay no-op.
 
 ## Tools

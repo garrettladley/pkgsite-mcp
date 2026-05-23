@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/garrettladley/pkgsite-mcp/internal/config"
+	"github.com/garrettladley/pkgsite-mcp/internal/kv"
 	"github.com/garrettladley/pkgsite-mcp/internal/pkgsiteapi"
 	"github.com/garrettladley/pkgsite-mcp/internal/version"
 )
@@ -22,10 +23,14 @@ func NewFromEnv() (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
-	return New(cfg.Pkgsite)
+	store, err := kv.NewStore(cfg.KV.RedisURL)
+	if err != nil {
+		return nil, fmt.Errorf("configure kv store: %w", err)
+	}
+	return New(cfg.Pkgsite, store)
 }
 
-func New(cfg config.Pkgsite) (*Client, error) {
+func New(cfg config.Pkgsite, store kv.Store) (*Client, error) {
 	baseURL := strings.TrimSpace(cfg.BaseURL)
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
@@ -34,10 +39,7 @@ func New(cfg config.Pkgsite) (*Client, error) {
 	if timeout == 0 {
 		timeout = 10 * time.Second
 	}
-	doer, err := newCachedDoer(newHTTPClient(timeout), cfg.RedisURL, cfg.CacheDisabled)
-	if err != nil {
-		return nil, fmt.Errorf("configure redis cache: %w", err)
-	}
+	doer := newCachedDoer(newHTTPClient(timeout), store, cfg.CacheDisabled)
 	api, err := pkgsiteapi.NewClientWithResponses(
 		baseURL,
 		pkgsiteapi.WithHTTPClient(doer),

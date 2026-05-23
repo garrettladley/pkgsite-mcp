@@ -105,7 +105,7 @@ logs:
 # run the HTTP MCP server locally
 [group('dev')]
 serve-http: build
-    PKGSITE_REDIS_URL="${PKGSITE_REDIS_URL:-redis://localhost:9736/0}" .cache/bin/pkgsite-mcp serve --transport http --addr :8080
+    KV_REDIS_URL="${KV_REDIS_URL:-redis://localhost:9736/0}" .cache/bin/pkgsite-mcp serve --transport http --addr :8080
 
 # run tests
 [group('dev')]
