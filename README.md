@@ -66,9 +66,17 @@ PKGSITE_BASE_URL=https://pkg.go.dev/v1beta
 PKGSITE_REDIS_URL=redis://localhost:9736/0
 PKGSITE_HTTP_TIMEOUT=10s
 PKGSITE_CACHE_DISABLED=false
+SENTRY_DSN=
+O11Y_SERVICE_NAME=pkgsite-mcp
+O11Y_ENVIRONMENT=
+O11Y_FLUSH_TIMEOUT=2s
+O11Y_TRACES_SAMPLE_RATE=1.0
+O11Y_ENABLE_LOGS=true
+O11Y_ENABLE_METRICS=true
 ```
 
 Redis is optional. Without `PKGSITE_REDIS_URL`, requests go directly to pkg.go.dev.
+Sentry is optional. Without `SENTRY_DSN`, observability calls stay no-op.
 
 ## Tools
 

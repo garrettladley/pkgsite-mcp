@@ -14,5 +14,5 @@ func (s *Server) packageInfo(ctx context.Context, _ *mcp.CallToolRequest, input 
 		return nil, nil, fmt.Errorf("package_path is required")
 	}
 	result, err := s.client.Package(ctx, input)
-	return s.result(result, input.PageInput, toolNamePackage, map[string]any{"package_path": input.PackagePath, "module_path": input.ModulePath, "version": input.Version}, err)
+	return s.result(ctx, result, input.PageInput, toolNamePackage, map[string]any{"package_path": input.PackagePath, "module_path": input.ModulePath, "version": input.Version}, err)
 }

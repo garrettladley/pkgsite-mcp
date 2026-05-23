@@ -14,5 +14,5 @@ func (s *Server) module(ctx context.Context, _ *mcp.CallToolRequest, input pkgsi
 		return nil, nil, fmt.Errorf("module_path is required")
 	}
 	result, err := s.client.Module(ctx, input)
-	return s.result(result, input.PageInput, toolNameModule, map[string]any{"module_path": input.ModulePath, "version": input.Version}, err)
+	return s.result(ctx, result, input.PageInput, toolNameModule, map[string]any{"module_path": input.ModulePath, "version": input.Version}, err)
 }

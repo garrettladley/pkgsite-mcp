@@ -8,9 +8,10 @@ import (
 )
 
 type Config struct {
-	Port    string  `env:"PORT" envDefault:"8080"`
-	Pkgsite Pkgsite `envPrefix:"PKGSITE_"`
-	Sentry  Sentry
+	Port          string        `env:"PORT" envDefault:"8080"`
+	Observability Observability `envPrefix:"O11Y_"`
+	Pkgsite       Pkgsite       `envPrefix:"PKGSITE_"`
+	Sentry        Sentry
 }
 
 type Pkgsite struct {
@@ -22,6 +23,15 @@ type Pkgsite struct {
 
 type Sentry struct {
 	DSN string `env:"SENTRY_DSN"`
+}
+
+type Observability struct {
+	ServiceName      string        `env:"SERVICE_NAME" envDefault:"pkgsite-mcp"`
+	Environment      string        `env:"ENVIRONMENT"`
+	FlushTimeout     time.Duration `env:"FLUSH_TIMEOUT" envDefault:"2s"`
+	TracesSampleRate float64       `env:"TRACES_SAMPLE_RATE" envDefault:"1.0"`
+	EnableLogs       bool          `env:"ENABLE_LOGS" envDefault:"true"`
+	EnableMetrics    bool          `env:"ENABLE_METRICS" envDefault:"true"`
 }
 
 func Read() (Config, error) {

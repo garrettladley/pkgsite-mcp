@@ -14,5 +14,5 @@ func (s *Server) search(ctx context.Context, _ *mcp.CallToolRequest, input pkgsi
 		return nil, nil, fmt.Errorf("query is required")
 	}
 	result, err := s.client.Search(ctx, input)
-	return s.result(result, input.PageInput, toolNameSearch, map[string]any{"query": input.Query, "symbol": input.Symbol, "limit": input.Limit, "token": input.Token, "filter": input.Filter}, err)
+	return s.result(ctx, result, input.PageInput, toolNameSearch, map[string]any{"query": input.Query, "symbol": input.Symbol, "limit": input.Limit, "token": input.Token, "filter": input.Filter}, err)
 }

@@ -14,7 +14,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/garrettladley/pkgsite-mcp/internal/observability"
+	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const cacheHitHeader = "X-Pkgsite-Mcp-Cache-Hit"
@@ -37,7 +43,7 @@ func newHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
 		Transport: retryTransport{
-			base: http.DefaultTransport,
+			base: otelhttp.NewTransport(http.DefaultTransport),
 		},
 		CheckRedirect: base.CheckRedirect,
 	}
@@ -53,42 +59,45 @@ func newCachedDoer(httpClient *http.Client, redisURL string, disabled bool) (*ca
 		return nil, err
 	}
 	doer.redis = redis.NewClient(opts)
+	if err := redisotel.InstrumentTracing(doer.redis); err != nil {
+		return nil, err
+	}
+	if err := redisotel.InstrumentMetrics(doer.redis); err != nil {
+		return nil, err
+	}
 	return doer, nil
 }
 
 func (d *cachedDoer) Do(req *http.Request) (*http.Response, error) {
 	if req.Method != http.MethodGet || d.off || d.redis == nil {
+		observability.RecordCacheLookup(req.Context(), cacheBypassOutcome(req, d), 0)
 		return d.client.Do(req)
 	}
 
+	ctx, span := observability.Tracer("pkgsite-cache").Start(req.Context(), "pkgsite.cache lookup",
+		trace.WithAttributes(
+			attribute.String("http.request.method", req.Method),
+			attribute.String("url.path", req.URL.EscapedPath()),
+		),
+	)
+	defer span.End()
+	req = req.WithContext(ctx)
+	start := time.Now()
 	key := cacheKey(req)
-	if cached, err := d.redis.Get(req.Context(), key).Bytes(); err == nil {
-		var record cachedResponse
-		if err := json.Unmarshal(cached, &record); err == nil {
-			if record.Header == nil {
-				record.Header = http.Header{}
-			}
-			record.Header.Set(cacheHitHeader, "true")
-			return &http.Response{
-				StatusCode: record.StatusCode,
-				Status:     record.Status,
-				Header:     record.Header,
-				Body:       io.NopCloser(bytes.NewReader(record.Body)),
-				Request:    req,
-			}, nil
-		}
-		// Backward-compatible fallback for early body-only cache entries.
-		resp := &http.Response{
-			StatusCode: http.StatusOK,
-			Status:     "200 OK",
-			Header: http.Header{
-				"Content-Type": []string{"application/json"},
-				cacheHitHeader: []string{"true"},
-			},
-			Body:    io.NopCloser(bytes.NewReader(cached)),
-			Request: req,
-		}
-		return resp, nil
+	span.SetAttributes(attribute.String("cache.key_hash", strings.TrimPrefix(key, "pkgsite:v1beta:http:")))
+	cached, err := d.redis.Get(req.Context(), key).Bytes()
+	switch {
+	case err == nil:
+		observability.RecordCacheLookup(req.Context(), observability.CacheOutcomeHit, time.Since(start))
+		span.SetAttributes(attribute.Bool("cache.hit", true))
+		return cachedHTTPResponse(req, cached), nil
+	case !errors.Is(err, redis.Nil):
+		observability.RecordCacheLookup(req.Context(), observability.CacheOutcomeError, time.Since(start))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	default:
+		observability.RecordCacheLookup(req.Context(), observability.CacheOutcomeMiss, time.Since(start))
+		span.SetAttributes(attribute.Bool("cache.hit", false))
 	}
 
 	resp, err := d.client.Do(req)
@@ -110,10 +119,54 @@ func (d *cachedDoer) Do(req *http.Request) (*http.Response, error) {
 			Body:       body,
 		}
 		if encoded, err := json.Marshal(record); err == nil {
-			_ = d.redis.Set(req.Context(), key, encoded, ttl).Err()
+			err = d.redis.Set(req.Context(), key, encoded, ttl).Err()
+			observability.RecordCacheWrite(req.Context(), err == nil)
+			if err != nil {
+				span.RecordError(err)
+			}
+		} else {
+			observability.RecordCacheWrite(req.Context(), false)
+			span.RecordError(err)
 		}
 	}
 	return resp, nil
+}
+
+func cachedHTTPResponse(req *http.Request, cached []byte) *http.Response {
+	var record cachedResponse
+	if err := json.Unmarshal(cached, &record); err == nil {
+		if record.Header == nil {
+			record.Header = http.Header{}
+		}
+		record.Header.Set(cacheHitHeader, "true")
+		return &http.Response{
+			StatusCode: record.StatusCode,
+			Status:     record.Status,
+			Header:     record.Header,
+			Body:       io.NopCloser(bytes.NewReader(record.Body)),
+			Request:    req,
+		}
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Status:     "200 OK",
+		Header: http.Header{
+			"Content-Type": []string{"application/json"},
+			cacheHitHeader: []string{"true"},
+		},
+		Body:    io.NopCloser(bytes.NewReader(cached)),
+		Request: req,
+	}
+}
+
+func cacheBypassOutcome(req *http.Request, d *cachedDoer) observability.CacheOutcome {
+	if req.Method != http.MethodGet {
+		return observability.CacheOutcomeBypass
+	}
+	if d.off || d.redis == nil {
+		return observability.CacheOutcomeDisabled
+	}
+	return observability.CacheOutcomeBypass
 }
 
 func cacheKey(req *http.Request) string {

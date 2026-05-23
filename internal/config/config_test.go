@@ -17,6 +17,12 @@ func TestReadDefaults(t *testing.T) {
 	if got.Port != "8080" {
 		t.Fatalf("Port = %q, want 8080", got.Port)
 	}
+	if got.Observability.ServiceName != "pkgsite-mcp" {
+		t.Fatalf("ServiceName = %q, want pkgsite-mcp", got.Observability.ServiceName)
+	}
+	if got.Observability.FlushTimeout != 2*time.Second {
+		t.Fatalf("FlushTimeout = %s, want 2s", got.Observability.FlushTimeout)
+	}
 	if got.Pkgsite.BaseURL != "https://pkg.go.dev/v1beta" {
 		t.Fatalf("BaseURL = %q, want default", got.Pkgsite.BaseURL)
 	}
@@ -29,17 +35,33 @@ func TestReadDefaults(t *testing.T) {
 	if got.Pkgsite.CacheDisabled {
 		t.Fatal("CacheDisabled = true, want false")
 	}
+	if got.Observability.TracesSampleRate != 1.0 {
+		t.Fatalf("TracesSampleRate = %f, want 1.0", got.Observability.TracesSampleRate)
+	}
+	if !got.Observability.EnableLogs {
+		t.Fatal("EnableLogs = false, want true")
+	}
+	if !got.Observability.EnableMetrics {
+		t.Fatal("EnableMetrics = false, want true")
+	}
 }
 
 func TestReadOverrides(t *testing.T) {
 	t.Parallel()
 
 	got, err := read(env.Options{Environment: map[string]string{
-		"PORT":                   "9090",
-		"PKGSITE_BASE_URL":       "http://example.test",
-		"PKGSITE_HTTP_TIMEOUT":   "250ms",
-		"PKGSITE_REDIS_URL":      "redis://localhost:6379/0",
-		"PKGSITE_CACHE_DISABLED": "true",
+		"PORT":                    "9090",
+		"O11Y_SERVICE_NAME":       "pkgsite-test",
+		"O11Y_ENVIRONMENT":        "test",
+		"O11Y_FLUSH_TIMEOUT":      "5s",
+		"O11Y_TRACES_SAMPLE_RATE": "0.25",
+		"O11Y_ENABLE_LOGS":        "false",
+		"O11Y_ENABLE_METRICS":     "false",
+		"PKGSITE_BASE_URL":        "http://example.test",
+		"PKGSITE_HTTP_TIMEOUT":    "250ms",
+		"PKGSITE_REDIS_URL":       "redis://localhost:6379/0",
+		"PKGSITE_CACHE_DISABLED":  "true",
+		"SENTRY_DSN":              "https://public@example.invalid/1",
 	}})
 	if err != nil {
 		t.Fatalf("Read returned error: %v", err)
@@ -56,6 +78,15 @@ func TestReadOverrides(t *testing.T) {
 	if got.Pkgsite.BaseURL != "http://example.test" {
 		t.Fatalf("BaseURL = %q, want override", got.Pkgsite.BaseURL)
 	}
+	if got.Observability.ServiceName != "pkgsite-test" {
+		t.Fatalf("ServiceName = %q, want pkgsite-test", got.Observability.ServiceName)
+	}
+	if got.Observability.Environment != "test" {
+		t.Fatalf("Environment = %q, want test", got.Observability.Environment)
+	}
+	if got.Observability.FlushTimeout != 5*time.Second {
+		t.Fatalf("FlushTimeout = %s, want 5s", got.Observability.FlushTimeout)
+	}
 	if got.Pkgsite.HTTPTimeout != 250*time.Millisecond {
 		t.Fatalf("HTTPTimeout = %s, want 250ms", got.Pkgsite.HTTPTimeout)
 	}
@@ -64,5 +95,17 @@ func TestReadOverrides(t *testing.T) {
 	}
 	if !got.Pkgsite.CacheDisabled {
 		t.Fatal("CacheDisabled = false, want true")
+	}
+	if got.Sentry.DSN != "https://public@example.invalid/1" {
+		t.Fatalf("Sentry.DSN = %q, want override", got.Sentry.DSN)
+	}
+	if got.Observability.TracesSampleRate != 0.25 {
+		t.Fatalf("TracesSampleRate = %f, want 0.25", got.Observability.TracesSampleRate)
+	}
+	if got.Observability.EnableLogs {
+		t.Fatal("EnableLogs = true, want false")
+	}
+	if got.Observability.EnableMetrics {
+		t.Fatal("EnableMetrics = true, want false")
 	}
 }
