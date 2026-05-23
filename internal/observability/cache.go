@@ -63,7 +63,7 @@ func initCacheMetrics(sink MetricSink) {
 }
 
 func RecordCacheLookup(ctx context.Context, outcome CacheOutcome, duration time.Duration) {
-	outcomeAttr := attribute.String("cache.outcome", string(outcome))
+	outcomeAttr := attribute.String(AttrPkgsiteCacheOutcome, string(outcome))
 	cacheMetrics.lookups.Add(ctx, 1, metric.WithAttributes(outcomeAttr))
 	cacheMetrics.lookupMillis.Record(ctx, float64(duration)/float64(time.Millisecond), metric.WithAttributes(outcomeAttr))
 	switch outcome {
@@ -81,11 +81,8 @@ func RecordCacheLookup(ctx context.Context, outcome CacheOutcome, duration time.
 }
 
 func RecordCacheWrite(ctx context.Context, ok bool) {
-	outcome := "ok"
-	if !ok {
-		outcome = "error"
-	}
-	outcomeAttr := attribute.String("cache.write.outcome", outcome)
+	outcome := CacheWriteOutcomeFromOK(ok)
+	outcomeAttr := attribute.String(AttrPkgsiteCacheWriteOutcome, string(outcome))
 	cacheMetrics.writes.Add(ctx, 1, metric.WithAttributes(outcomeAttr))
 	if !ok {
 		cacheMetrics.writeErrors.Add(ctx, 1)
