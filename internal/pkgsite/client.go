@@ -3,31 +3,19 @@ package pkgsite
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/garrettladley/pkgsite-mcp/internal/config"
 	"github.com/garrettladley/pkgsite-mcp/internal/kv"
+	"github.com/garrettladley/pkgsite-mcp/internal/pkgsite/transport"
 	"github.com/garrettladley/pkgsite-mcp/internal/pkgsiteapi"
 	"github.com/garrettladley/pkgsite-mcp/internal/version"
 )
 
 type Client struct {
 	api *pkgsiteapi.ClientWithResponses
-}
-
-func NewFromEnv() (*Client, error) {
-	cfg, err := config.Read()
-	if err != nil {
-		return nil, fmt.Errorf("read config: %w", err)
-	}
-	store, err := kv.NewStore(cfg.KV.RedisURL)
-	if err != nil {
-		return nil, fmt.Errorf("configure kv store: %w", err)
-	}
-	return New(cfg.Pkgsite, store)
 }
 
 func New(cfg config.Pkgsite, store kv.Store) (*Client, error) {
@@ -39,7 +27,7 @@ func New(cfg config.Pkgsite, store kv.Store) (*Client, error) {
 	if timeout == 0 {
 		timeout = 10 * time.Second
 	}
-	doer := newCachedDoer(newHTTPClient(timeout), store, cfg.CacheDisabled)
+	doer := transport.NewCachedDoer(transport.NewHTTPClient(timeout), store, cfg.CacheDisabled)
 	api, err := pkgsiteapi.NewClientWithResponses(
 		baseURL,
 		pkgsiteapi.WithHTTPClient(doer),
@@ -283,5 +271,5 @@ func requestURL(resp *http.Response) string {
 }
 
 func fromCache(resp *http.Response) bool {
-	return resp != nil && resp.Header.Get(cacheHitHeader) == "true"
+	return resp != nil && resp.Header.Get(transport.CacheHitHeader) == "true"
 }

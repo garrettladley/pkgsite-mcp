@@ -9,19 +9,25 @@ import (
 	"time"
 
 	"github.com/garrettladley/pkgsite-mcp/internal/config"
-	"github.com/garrettladley/pkgsite-mcp/internal/kv"
+	kvredis "github.com/garrettladley/pkgsite-mcp/internal/kv/redis"
+	"github.com/garrettladley/pkgsite-mcp/internal/mcpserver/tools"
 	"github.com/garrettladley/pkgsite-mcp/internal/observability"
 	sentryobs "github.com/garrettladley/pkgsite-mcp/internal/observability/sentry"
 	"github.com/garrettladley/pkgsite-mcp/internal/pkgsite"
 	"github.com/garrettladley/pkgsite-mcp/internal/version"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
+)
+
+const (
+	mcpServerName = "pkgsite"
+
+	// Stateless streamable HTTP sessions close when each request exits.
+	statelessSessionTimeout time.Duration = 0
 )
 
 type Server struct {
 	client *pkgsite.Client
+	logger *slog.Logger
 }
 
 func RunStdio(ctx context.Context) error {
@@ -42,7 +48,7 @@ func RunStdio(ctx context.Context) error {
 		}
 	}()
 
-	store, err := kv.NewStore(cfg.KV.RedisURL)
+	store, err := kvredis.New(cfg.KV.RedisURL)
 	if err != nil {
 		return fmt.Errorf("configure kv store: %w", err)
 	}
@@ -50,7 +56,7 @@ func RunStdio(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return New(client).Run(ctx)
+	return New(client, obs.Logger).Run(ctx)
 }
 
 func observabilityOptions(cfg config.Observability) observability.Options {
@@ -65,8 +71,8 @@ func observabilityOptions(cfg config.Observability) observability.Options {
 	}
 }
 
-func New(client *pkgsite.Client) *Server {
-	return &Server{client: client}
+func New(client *pkgsite.Client, logger *slog.Logger) *Server {
+	return &Server{client: client, logger: logger}
 }
 
 func (s *Server) Run(ctx context.Context) error {
@@ -84,68 +90,17 @@ func (s *Server) Handler() http.Handler {
 		&mcp.StreamableHTTPOptions{
 			Stateless:      true,
 			JSONResponse:   true,
-			SessionTimeout: 30 * time.Minute,
+			Logger:         s.logger,
+			SessionTimeout: statelessSessionTimeout,
 		},
 	)
 }
 
 func (s *Server) mcpServer() *mcp.Server {
-	server := mcp.NewServer(&mcp.Implementation{Name: mcpServerName, Version: version.Version}, nil)
-	s.registerTools(server)
-	return server
-}
-
-func (s *Server) registerTools(server *mcp.Server) {
-	readOnly := true
-	openWorld := true
-	tool := func(name string) *mcp.Tool {
-		return &mcp.Tool{Name: name, Description: ToolDescription(name), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly, OpenWorldHint: &openWorld}}
-	}
-	mcp.AddTool(server, tool(toolNameListSkills), instrumentTool(toolNameListSkills, s.listSkills))
-	mcp.AddTool(server, tool(toolNameLoadSkill), instrumentTool(toolNameLoadSkill, s.loadSkill))
-	mcp.AddTool(server, tool(toolNameSearch), instrumentTool(toolNameSearch, s.search))
-	mcp.AddTool(server, tool(toolNameModule), instrumentTool(toolNameModule, s.module))
-	mcp.AddTool(server, tool(toolNamePackage), instrumentTool(toolNamePackage, s.packageInfo))
-	mcp.AddTool(server, tool(toolNameVersions), instrumentTool(toolNameVersions, s.versions))
-	mcp.AddTool(server, tool(toolNamePackages), instrumentTool(toolNamePackages, s.packages))
-	mcp.AddTool(server, tool(toolNameSymbols), instrumentTool(toolNameSymbols, s.symbols))
-	mcp.AddTool(server, tool(toolNameImportedBy), instrumentTool(toolNameImportedBy, s.importedBy))
-	mcp.AddTool(server, tool(toolNameVulns), instrumentTool(toolNameVulns, s.vulns))
-	mcp.AddTool(server, tool(toolNameExplain), instrumentTool(toolNameExplain, s.explain))
-}
-
-func instrumentTool[I any](toolName string, next func(context.Context, *mcp.CallToolRequest, I) (*mcp.CallToolResult, any, error)) func(context.Context, *mcp.CallToolRequest, I) (*mcp.CallToolResult, any, error) {
-	return func(ctx context.Context, req *mcp.CallToolRequest, input I) (*mcp.CallToolResult, any, error) {
-		ctx, span := observability.Tracer("mcp").Start(ctx, "mcp.tool "+toolName, trace.WithAttributes(attribute.String("mcp.tool.name", toolName)))
-		defer span.End()
-
-		result, meta, err := next(ctx, req, input)
-		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-		}
-		return result, meta, err
-	}
-}
-
-func (s *Server) result(ctx context.Context, result pkgsite.Result, page pkgsite.PageInput, toolName string, nextArgs map[string]any, err error) (*mcp.CallToolResult, any, error) {
-	span := trace.SpanFromContext(ctx)
-	span.SetAttributes(
-		attribute.String("mcp.tool.name", toolName),
-		attribute.Bool("pkgsite.from_cache", result.FromCache),
-		attribute.Bool("pkgsite.upstream_url_present", result.UpstreamURL != ""),
-		attribute.Int("pkgsite.result.count", len(result.Items)),
+	server := mcp.NewServer(
+		&mcp.Implementation{Name: mcpServerName, Version: version.Version},
+		&mcp.ServerOptions{Logger: s.logger},
 	)
-	if err != nil {
-		return nil, nil, err
-	}
-	if result.Error != nil {
-		span.SetAttributes(attribute.Int("pkgsite.error.status_code", result.Error.StatusCode))
-		span.SetStatus(codes.Error, result.Error.Status)
-	}
-	opts := envelopeOptions{Source: pkgsite.DefaultBaseURL, UpstreamURL: result.UpstreamURL, ToolName: toolName, NextArgs: nextArgs}
-	if len(result.Items) > 0 {
-		return textResult(paginatedEnvelope(result, page, opts)), nil, nil
-	}
-	return textResult(singleEnvelope(result, opts)), nil, nil
+	tools.Register(server, s.client)
+	return server
 }

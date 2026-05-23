@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/garrettladley/pkgsite-mcp/internal/config"
-	"github.com/garrettladley/pkgsite-mcp/internal/kv"
+	kvredis "github.com/garrettladley/pkgsite-mcp/internal/kv/redis"
 	"github.com/garrettladley/pkgsite-mcp/internal/mcpserver"
 	"github.com/garrettladley/pkgsite-mcp/internal/middleware"
 	"github.com/garrettladley/pkgsite-mcp/internal/observability"
@@ -57,7 +57,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	}()
 	logger = obs.Logger
 
-	store, err := kv.NewStore(cfg.KV.RedisURL)
+	store, err := kvredis.New(cfg.KV.RedisURL)
 	if err != nil {
 		return fmt.Errorf("configure kv store: %w", err)
 	}
@@ -66,7 +66,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		return fmt.Errorf("initialize pkgsite client: %w", err)
 	}
 
-	mcpHandler := mcpserver.New(client).Handler()
+	mcpHandler := mcpserver.New(client, logger).Handler()
 	mux := http.NewServeMux()
 	mux.Handle("POST /mcp", mcpHandler)
 	mux.Handle("GET /mcp", mcpHandler)
@@ -77,10 +77,10 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	})
 
 	handler := middleware.Chain(
-		securityHeaders,
+		middleware.SecurityHeaders,
 		obs.Middleware,
-		logging(logger),
-		recovery(obs),
+		middleware.Logging(logger),
+		middleware.Recovery(obs),
 		middleware.RateLimit(store, cfg.RateLimit, logger),
 	)(mux)
 	handler = otelhttp.NewHandler(handler, "http.server",
@@ -146,56 +146,4 @@ func observabilityOptions(cfg config.Observability) observability.Options {
 		EnableLogs:       cfg.EnableLogs,
 		EnableMetrics:    cfg.EnableMetrics,
 	}
-}
-
-func logging(logger *slog.Logger) middleware.Middleware {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			start := time.Now()
-			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-			next.ServeHTTP(rec, r)
-			args := []any{
-				slog.String("method", r.Method),
-				slog.String("path", r.URL.Path),
-				slog.Int("status", rec.status),
-				slog.Duration("duration", time.Since(start)),
-			}
-			for _, attr := range observability.TraceAttrs(r.Context()) {
-				args = append(args, attr)
-			}
-			logger.InfoContext(r.Context(), "http request", args...)
-		})
-	}
-}
-
-func recovery(obs *observability.Handle) middleware.Middleware {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			defer func() {
-				if recovered := recover(); recovered != nil {
-					obs.Recover(r.Context(), recovered)
-					http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-				}
-			}()
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
-func securityHeaders(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Referrer-Policy", "no-referrer")
-		next.ServeHTTP(w, r)
-	})
-}
-
-type statusRecorder struct {
-	http.ResponseWriter
-	status int
-}
-
-func (r *statusRecorder) WriteHeader(status int) {
-	r.status = status
-	r.ResponseWriter.WriteHeader(status)
 }
