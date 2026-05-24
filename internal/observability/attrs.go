@@ -19,6 +19,11 @@ const (
 	AttrMCPResponseNextStartAt     = "mcp.response.next_start_at"
 	AttrMCPResponseMaxTokens       = "mcp.response.max_tokens"
 	AttrMCPResponseMaxTokensBucket = "mcp.response.max_tokens_bucket"
+	AttrMCPClientName              = "mcp.client.name"
+	AttrMCPClientTitle             = "mcp.client.title"
+	AttrMCPClientVersion           = "mcp.client.version"
+	AttrMCPProtocolVersion         = "mcp.protocol.version"
+	AttrMCPProtocolVersionHeader   = "mcp.protocol.version_header"
 
 	AttrPkgsiteLookupKind         = "pkgsite.lookup.kind"
 	AttrPkgsiteModulePath         = "pkgsite.module_path"
@@ -191,6 +196,25 @@ func (a EnvelopeAttrs) Attributes() []attribute.KeyValue {
 	return attrs
 }
 
+type InitializeAttrs struct {
+	ClientName            string
+	ClientTitle           string
+	ClientVersion         string
+	ProtocolVersion       string
+	ProtocolVersionHeader string
+}
+
+func (a InitializeAttrs) Attributes() []attribute.KeyValue {
+	attrs := []attribute.KeyValue{
+		attribute.String(AttrMCPClientName, metricString(a.ClientName)),
+		attribute.String(AttrMCPClientTitle, metricString(a.ClientTitle)),
+		attribute.String(AttrMCPClientVersion, metricString(a.ClientVersion)),
+		attribute.String(AttrMCPProtocolVersion, metricString(a.ProtocolVersion)),
+	}
+	attrs = appendTrimmedString(attrs, AttrMCPProtocolVersionHeader, a.ProtocolVersionHeader)
+	return attrs
+}
+
 type CacheLookupAttrs struct {
 	Method       string
 	URL          *url.URL
@@ -347,6 +371,14 @@ func appendTrimmedString(attrs []attribute.KeyValue, key, value string) []attrib
 		return attrs
 	}
 	return append(attrs, attribute.String(key, value))
+}
+
+func metricString(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "unknown"
+	}
+	return value
 }
 
 func intQueryValue(u *url.URL, key string) int {

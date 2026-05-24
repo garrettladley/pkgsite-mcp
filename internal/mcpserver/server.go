@@ -109,6 +109,37 @@ func (s *Server) mcpServer() *mcp.Server {
 		},
 		&mcp.ServerOptions{Logger: s.logger},
 	)
+	server.AddReceivingMiddleware(recordInitializeMetrics)
 	tools.Register(server, s.client)
 	return server
+}
+
+func recordInitializeMetrics(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		result, err := next(ctx, method, req)
+		if method == "initialize" && err == nil {
+			recordInitialize(ctx, req)
+		}
+		return result, err
+	}
+}
+
+func recordInitialize(ctx context.Context, req mcp.Request) {
+	params, ok := req.GetParams().(*mcp.InitializeParams)
+	if !ok || params == nil {
+		return
+	}
+
+	attrs := observability.InitializeAttrs{
+		ProtocolVersion: params.ProtocolVersion,
+	}
+	if params.ClientInfo != nil {
+		attrs.ClientName = params.ClientInfo.Name
+		attrs.ClientTitle = params.ClientInfo.Title
+		attrs.ClientVersion = params.ClientInfo.Version
+	}
+	if extra := req.GetExtra(); extra != nil {
+		attrs.ProtocolVersionHeader = extra.Header.Get("MCP-Protocol-Version")
+	}
+	observability.RecordMCPInitialize(ctx, attrs)
 }

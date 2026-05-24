@@ -112,8 +112,10 @@ func Setup(ctx context.Context, opts Options, logger *slog.Logger, backend Backe
 			handle.Logger = slog.New(multiHandler{handlers: []slog.Handler{logger.Handler(), logHandler}})
 		}
 		initCacheMetrics(backendHandle.MetricSink())
+		initMCPMetrics(backendHandle.MetricSink())
 	} else {
 		initCacheMetrics(nil)
+		initMCPMetrics(nil)
 	}
 
 	return handle, nil
