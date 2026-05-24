@@ -13,10 +13,10 @@ func TestRecordMCPInitializeWritesMetricSink(t *testing.T) {
 	t.Parallel()
 
 	sink := &recordingMetricSink{}
-	initMCPMetrics(sink)
-	t.Cleanup(func() { initMCPMetrics(nil) })
+	metrics := newMCPMetrics()
+	metrics.init(sink)
 
-	RecordMCPInitialize(t.Context(), InitializeAttrs{
+	metrics.recordInitialize(t.Context(), InitializeAttrs{
 		ClientName:      "codex-mcp-client",
 		ClientTitle:     "Codex",
 		ClientVersion:   "1.2.3",

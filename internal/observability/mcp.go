@@ -22,18 +22,26 @@ func newMCPMetrics() *mcpMetricSet {
 }
 
 func initMCPMetrics(sink MetricSink) {
-	if sink == nil {
-		mcpMetrics.sink.Store(nil)
-		return
-	}
-	mcpMetrics.sink.Store(&metricSinkHolder{sink: sink})
+	mcpMetrics.init(sink)
 }
 
 func RecordMCPInitialize(ctx context.Context, attrs InitializeAttrs) {
-	metricAttrs := attrs.Attributes()
-	mcpMetrics.initializes.Add(ctx, 1, metric.WithAttributes(metricAttrs...))
+	mcpMetrics.recordInitialize(ctx, attrs)
+}
 
-	if holder := mcpMetrics.sink.Load(); holder != nil {
+func (m *mcpMetricSet) init(sink MetricSink) {
+	if sink == nil {
+		m.sink.Store(nil)
+		return
+	}
+	m.sink.Store(&metricSinkHolder{sink: sink})
+}
+
+func (m *mcpMetricSet) recordInitialize(ctx context.Context, attrs InitializeAttrs) {
+	metricAttrs := attrs.Attributes()
+	m.initializes.Add(ctx, 1, metric.WithAttributes(metricAttrs...))
+
+	if holder := m.sink.Load(); holder != nil {
 		holder.sink.Count(ctx, "mcp.initialize", 1, metricAttrs...)
 	}
 }
