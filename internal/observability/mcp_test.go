@@ -10,6 +10,8 @@ import (
 )
 
 func TestRecordMCPInitializeWritesMetricSink(t *testing.T) {
+	t.Parallel()
+
 	sink := &recordingMetricSink{}
 	initMCPMetrics(sink)
 	t.Cleanup(func() { initMCPMetrics(nil) })
