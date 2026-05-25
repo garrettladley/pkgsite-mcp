@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/garrettladley/pkgsite-mcp/internal/middleware"
+	"github.com/garrettladley/pkgsite-mcp/internal/xhttp"
 )
 
 func TestHealthDoesNotExposeBuildMetadata(t *testing.T) {
@@ -31,8 +31,8 @@ func TestHTTPSpanNameIncludesMCPMethodAndName(t *testing.T) {
 	t.Parallel()
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", nil)
-	req.Header.Set(middleware.HeaderInternalMCPMethod, "tools/call")
-	req.Header.Set(middleware.HeaderInternalMCPName, "pkgsite_search")
+	req.Header.Set(xhttp.HeaderInternalMCPMethod, "tools/call")
+	req.Header.Set(xhttp.HeaderInternalMCPName, "pkgsite_search")
 
 	if got, want := httpSpanName("", req), "POST /mcp tools/call pkgsite_search"; got != want {
 		t.Fatalf("httpSpanName() = %q, want %q", got, want)
@@ -43,7 +43,7 @@ func TestHTTPSpanNameIncludesMCPMethodWithoutName(t *testing.T) {
 	t.Parallel()
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", nil)
-	req.Header.Set(middleware.HeaderInternalMCPMethod, "tools/list")
+	req.Header.Set(xhttp.HeaderInternalMCPMethod, "tools/list")
 
 	if got, want := httpSpanName("", req), "POST /mcp tools/list"; got != want {
 		t.Fatalf("httpSpanName() = %q, want %q", got, want)

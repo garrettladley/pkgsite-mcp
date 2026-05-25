@@ -41,8 +41,8 @@ func addTool[I, O any](server *mcp.Server, tool *mcp.Tool, handler mcp.ToolHandl
 
 func instrumentTool[I, O any](toolName string, next mcp.ToolHandlerFor[I, O]) mcp.ToolHandlerFor[I, O] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, input I) (*mcp.CallToolResult, O, error) {
-		ctx, span := observability.Tracer("mcp").Start(ctx, "mcp.tool "+toolName, trace.WithAttributes(observability.ToolAttrs{ToolName: toolName, LookupKind: lookupKind(toolName)}.Attributes()...))
-		defer span.End()
+		span := trace.SpanFromContext(ctx)
+		span.SetAttributes(observability.ToolAttrs{ToolName: toolName, LookupKind: lookupKind(toolName)}.Attributes()...)
 
 		result, meta, err := next(ctx, req, input)
 		if err != nil {

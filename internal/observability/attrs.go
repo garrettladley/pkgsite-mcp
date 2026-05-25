@@ -11,7 +11,18 @@ import (
 )
 
 const (
+	AttrMCPMethodName              = "mcp.method.name"
+	AttrMCPTransport               = "mcp.transport"
+	AttrMCPRequestID               = "mcp.request.id"
+	AttrMCPSessionID               = "mcp.session.id"
 	AttrMCPToolName                = "mcp.tool.name"
+	AttrMCPPromptName              = "mcp.prompt.name"
+	AttrMCPResourceURI             = "mcp.resource.uri"
+	AttrMCPResourceName            = "mcp.resource.name"
+	AttrMCPToolResultIsError       = "mcp.tool.result.is_error"
+	AttrMCPToolResultContentCount  = "mcp.tool.result.content_count"
+	AttrMCPToolResultContent       = "mcp.tool.result.content"
+	AttrMCPNotificationDirection   = "mcp.notification.direction"
 	AttrMCPResponseDisplayedItems  = "mcp.response.displayed_items"
 	AttrMCPResponseTotalItems      = "mcp.response.total_items"
 	AttrMCPResponseStartAt         = "mcp.response.start_at"
@@ -22,8 +33,12 @@ const (
 	AttrMCPClientName              = "mcp.client.name"
 	AttrMCPClientTitle             = "mcp.client.title"
 	AttrMCPClientVersion           = "mcp.client.version"
+	AttrMCPServerName              = "mcp.server.name"
+	AttrMCPServerTitle             = "mcp.server.title"
+	AttrMCPServerVersion           = "mcp.server.version"
 	AttrMCPProtocolVersion         = "mcp.protocol.version"
 	AttrMCPProtocolVersionHeader   = "mcp.protocol.version_header"
+	AttrMCPRequestArgumentPrefix   = "mcp.request.argument."
 
 	AttrPkgsiteLookupKind         = "pkgsite.lookup.kind"
 	AttrPkgsiteModulePath         = "pkgsite.module_path"
@@ -52,7 +67,11 @@ const (
 
 	AttrHTTPRequestMethod      = "http.request.method"
 	AttrHTTPResponseStatusCode = "http.response.status_code"
+	AttrClientAddress          = "client.address"
+	AttrClientPort             = "client.port"
 	AttrURLPath                = "url.path"
+	AttrNetworkTransport       = "network.transport"
+	AttrNetworkProtocolVersion = "network.protocol.version"
 
 	AttrRateLimitOutcome         = "ratelimit.outcome"
 	AttrRateLimitRemainingBucket = "ratelimit.remaining_bucket"

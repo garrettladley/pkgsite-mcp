@@ -15,6 +15,7 @@ import (
 	sentryobs "github.com/garrettladley/pkgsite-mcp/internal/observability/sentry"
 	"github.com/garrettladley/pkgsite-mcp/internal/pkgsite"
 	"github.com/garrettladley/pkgsite-mcp/internal/version"
+	"github.com/garrettladley/pkgsite-mcp/internal/xhttp"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -79,7 +80,7 @@ func New(client *pkgsite.Client, logger *slog.Logger) *Server {
 }
 
 func (s *Server) Run(ctx context.Context) error {
-	server := s.mcpServer()
+	server := s.mcpServer(observability.MCPTransportStdio)
 	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
 		return fmt.Errorf("run MCP server: %w", err)
 	}
@@ -87,7 +88,7 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 func (s *Server) Handler() http.Handler {
-	server := s.mcpServer()
+	server := s.mcpServer(observability.MCPTransportHTTP)
 	return mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return server },
 		&mcp.StreamableHTTPOptions{
@@ -99,7 +100,7 @@ func (s *Server) Handler() http.Handler {
 	)
 }
 
-func (s *Server) mcpServer() *mcp.Server {
+func (s *Server) mcpServer(transport observability.MCPTransport) *mcp.Server {
 	server := mcp.NewServer(
 		&mcp.Implementation{
 			Name:       mcpServerName,
@@ -109,6 +110,16 @@ func (s *Server) mcpServer() *mcp.Server {
 		},
 		&mcp.ServerOptions{Logger: s.logger},
 	)
+	mcpTracingConfig := observability.MCPServerTracingConfig{
+		Transport: transport,
+		Server: observability.MCPServerInfo{
+			Name:    mcpServerName,
+			Title:   mcpServerTitle,
+			Version: version.Public(),
+		},
+	}
+	server.AddReceivingMiddleware(observability.MCPServerTracingMiddleware(mcpTracingConfig))
+	server.AddSendingMiddleware(observability.MCPServerSendingTracingMiddleware(mcpTracingConfig))
 	server.AddReceivingMiddleware(recordInitializeMetrics)
 	tools.Register(server, s.client)
 	return server
@@ -139,7 +150,7 @@ func recordInitialize(ctx context.Context, req mcp.Request) {
 		attrs.ClientVersion = params.ClientInfo.Version
 	}
 	if extra := req.GetExtra(); extra != nil {
-		attrs.ProtocolVersionHeader = extra.Header.Get("MCP-Protocol-Version")
+		attrs.ProtocolVersionHeader = extra.Header.Get(xhttp.HeaderMCPProtocolVersion)
 	}
 	observability.RecordMCPInitialize(ctx, attrs)
 }
