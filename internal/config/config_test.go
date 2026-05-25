@@ -1,7 +1,6 @@
 package config
 
 import (
-	"strings"
 	"testing"
 	"time"
 )
@@ -137,8 +136,26 @@ func TestReadParseError(t *testing.T) {
 	if err == nil {
 		t.Fatal("Read returned nil error, want parse error")
 	}
-	if !strings.Contains(err.Error(), `config: parsing RATE_LIMIT_REQUESTS="lots"`) {
-		t.Fatalf("error = %q, want RATE_LIMIT_REQUESTS parse context", err)
+	const want = `config: parsing RATE_LIMIT_REQUESTS="lots": strconv.Atoi: parsing "lots": invalid syntax`
+	if err.Error() != want {
+		t.Fatalf("error = %q, want %q", err, want)
+	}
+}
+
+func TestReadParseErrorKeepsFirstFailure(t *testing.T) {
+	t.Parallel()
+
+	_, err := read(mapGetenv(map[string]string{
+		"O11Y_FLUSH_TIMEOUT":   "soon",
+		"PKGSITE_HTTP_TIMEOUT": "later",
+		"RATE_LIMIT_REQUESTS":  "lots",
+	}))
+	if err == nil {
+		t.Fatal("Read returned nil error, want parse error")
+	}
+	const want = `config: parsing O11Y_FLUSH_TIMEOUT="soon": time: invalid duration "soon"`
+	if err.Error() != want {
+		t.Fatalf("error = %q, want %q", err, want)
 	}
 }
 
