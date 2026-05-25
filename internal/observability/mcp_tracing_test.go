@@ -68,6 +68,23 @@ func TestMCPServerSpanAttrsInitialize(t *testing.T) {
 	assertIntAttr(t, attrs, AttrClientPort, 54321)
 }
 
+func TestMCPServerSpanAttrsInitializeDoesNotDuplicateClientAddress(t *testing.T) {
+	t.Parallel()
+
+	req := &mcp.ServerRequest[*mcp.InitializeParams]{
+		Params: &mcp.InitializeParams{ProtocolVersion: "2025-06-18"},
+		Extra: &mcp.RequestExtra{Header: http.Header{
+			xhttp.HeaderInternalMCPClientAddress: {"203.0.113.9"},
+			xhttp.HeaderInternalMCPClientPort:    {"54321"},
+		}},
+	}
+	ctx := xcontext.WithMCPClient(t.Context(), xcontext.MCPClient{Address: "203.0.113.9", Port: 54321})
+	attrs := mcpServerSpanAttrs(ctx, MCPMethodInitialize, req, MCPServerTracingConfig{}, MCPDirectionClientToServer)
+
+	assertAttrCount(t, attrs, AttrClientAddress, 1)
+	assertAttrCount(t, attrs, AttrClientPort, 1)
+}
+
 func TestMCPServerSpanNamePromptAndResource(t *testing.T) {
 	t.Parallel()
 
@@ -108,6 +125,32 @@ func TestMCPToolResultAttrsFromResult(t *testing.T) {
 	assertBoolAttr(t, attrs, AttrMCPToolResultIsError, true)
 	assertIntAttr(t, attrs, AttrMCPToolResultContentCount, 2)
 	assertStringAttr(t, attrs, AttrMCPToolResultContent, `[{"type":"text","text":"one"},{"type":"text","text":"two"}]`)
+}
+
+func TestTruncateToolResultContent(t *testing.T) {
+	t.Parallel()
+
+	got := truncateToolResultContent("0123456789", 8)
+	if want := "01234..."; got != want {
+		t.Fatalf("truncateToolResultContent() = %q, want %q", got, want)
+	}
+	if got := truncateToolResultContent("short", 8); got != "short" {
+		t.Fatalf("truncateToolResultContent() = %q, want short", got)
+	}
+}
+
+func assertAttrCount(t *testing.T, attrs []attribute.KeyValue, key string, want int) {
+	t.Helper()
+
+	var got int
+	for _, attr := range attrs {
+		if string(attr.Key) == key {
+			got++
+		}
+	}
+	if got != want {
+		t.Fatalf("%s count = %d, want %d", key, got, want)
+	}
 }
 
 func assertBoolAttr(t *testing.T, attrs []attribute.KeyValue, key string, want bool) {

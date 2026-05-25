@@ -29,7 +29,10 @@ const (
 	NetworkTransportPipe = "pipe"
 	NetworkTransportTCP  = "tcp"
 
-	jsonRPCVersion = "2.0"
+	jsonRPCVersion                = "2.0"
+	maxToolResultContentBytes     = 4 << 10
+	toolResultContentTruncation   = "..."
+	minToolResultContentByteLimit = len(toolResultContentTruncation) + 1
 )
 
 type (
@@ -160,8 +163,7 @@ func mcpServerSpanAttrs(ctx context.Context, method string, req mcp.Request, cfg
 		attrs = appendTrimmedString(attrs, AttrMCPProtocolVersionHeader, extra.Header.Get(xhttp.HeaderMCPProtocolVersion))
 		attrs = appendTrimmedString(attrs, AttrMCPRequestID, extra.Header.Get(xhttp.HeaderInternalMCPRequestID))
 		attrs = appendClientAddressAttrs(attrs, method, extra.Header.Get(xhttp.HeaderInternalMCPClientAddress), extra.Header.Get(xhttp.HeaderInternalMCPClientPort))
-	}
-	if client, ok := xcontext.MCPClientFrom(ctx); ok {
+	} else if client, ok := xcontext.MCPClientFrom(ctx); ok {
 		attrs = appendClientAddressAttrs(attrs, method, client.Address, strconv.Itoa(client.Port))
 	}
 
@@ -241,13 +243,35 @@ func MCPToolResultAttrsFromResult(result mcp.Result) MCPToolResultAttrs {
 	}
 	var content string
 	if encoded, err := json.Marshal(toolResult.Content); err == nil {
-		content = string(encoded)
+		content = truncateToolResultContent(string(encoded), maxToolResultContentBytes)
 	}
 	return MCPToolResultAttrs{
 		IsError:      toolResult.IsError,
 		ContentCount: len(toolResult.Content),
 		Content:      content,
 	}
+}
+
+func truncateToolResultContent(content string, maxBytes int) string {
+	if len(content) <= maxBytes {
+		return content
+	}
+	if maxBytes < minToolResultContentByteLimit {
+		return ""
+	}
+
+	limit := maxBytes - len(toolResultContentTruncation)
+	cut := 0
+	for idx := range content {
+		if idx > limit {
+			break
+		}
+		cut = idx
+	}
+	if cut == 0 {
+		cut = limit
+	}
+	return content[:cut] + toolResultContentTruncation
 }
 
 func (t MCPTransport) NetworkTransport() string {
