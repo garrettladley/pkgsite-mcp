@@ -142,7 +142,7 @@ func TestReadParseError(t *testing.T) {
 	}
 }
 
-func TestReadParseErrorKeepsFirstFailure(t *testing.T) {
+func TestReadParseErrorReportsAllFailures(t *testing.T) {
 	t.Parallel()
 
 	_, err := read(mapGetenv(map[string]string{
@@ -153,7 +153,9 @@ func TestReadParseErrorKeepsFirstFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("Read returned nil error, want parse error")
 	}
-	const want = `config: parsing O11Y_FLUSH_TIMEOUT="soon": time: invalid duration "soon"`
+	const want = `config: parsing O11Y_FLUSH_TIMEOUT="soon": time: invalid duration "soon"
+config: parsing PKGSITE_HTTP_TIMEOUT="later": time: invalid duration "later"
+config: parsing RATE_LIMIT_REQUESTS="lots": strconv.Atoi: parsing "lots": invalid syntax`
 	if err.Error() != want {
 		t.Fatalf("error = %q, want %q", err, want)
 	}

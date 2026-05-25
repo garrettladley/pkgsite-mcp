@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -84,8 +85,8 @@ func read(getenv func(string) string) (Config, error) {
 			DSN: p.str("SENTRY_DSN", ""),
 		},
 	}
-	if p.err != nil {
-		return Config{}, p.err
+	if err := errors.Join(p.errs...); err != nil {
+		return Config{}, err
 	}
 	return cfg, nil
 }
@@ -101,11 +102,11 @@ func (c Config) HTTPAddr(override string) string {
 	return addr
 }
 
-// parser reads typed values via getenv, applying a default when a key is
-// unset/empty and recording the first parse failure.
+// parser reads typed values via getenv, applying a default when a key is unset
+// or invalid and recording parse failures for the final config error.
 type parser struct {
 	getenv func(string) string
-	err    error
+	errs   []error
 }
 
 func (p *parser) str(key, def string) string {
@@ -168,7 +169,5 @@ func (p *parser) duration(key string, def time.Duration) time.Duration {
 }
 
 func (p *parser) record(key, val string, err error) {
-	if p.err == nil {
-		p.err = fmt.Errorf("config: parsing %s=%q: %w", key, val, err)
-	}
+	p.errs = append(p.errs, fmt.Errorf("config: parsing %s=%q: %w", key, val, err))
 }
