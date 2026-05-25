@@ -12,6 +12,7 @@ import (
 	"github.com/garrettladley/pkgsite-mcp/internal/pkgsite/transport"
 	"github.com/garrettladley/pkgsite-mcp/internal/pkgsiteapi"
 	"github.com/garrettladley/pkgsite-mcp/internal/version"
+	"github.com/garrettladley/pkgsite-mcp/internal/xcontext"
 )
 
 type Client struct {
@@ -214,7 +215,7 @@ func (c *Client) Vulns(ctx context.Context, input VulnsInput) (Result, error) {
 }
 
 func (c *Client) warm(ctx context.Context, jobs ...WarmJob) {
-	if c.warmer == nil || warmingDisabled(ctx) {
+	if c.warmer == nil || xcontext.WarmingDisabled(ctx) {
 		return
 	}
 	c.warmer.Warm(ctx, jobs...)

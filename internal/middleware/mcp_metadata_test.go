@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/garrettladley/pkgsite-mcp/internal/xhttp"
 )
 
 func TestMCPRequestMetadataExtractsToolCall(t *testing.T) {
@@ -14,11 +16,20 @@ func TestMCPRequestMetadataExtractsToolCall(t *testing.T) {
 
 	const body = `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"pkgsite_search","arguments":{"query":"slices"}}}`
 	handler := MCPRequestMetadata(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		if got, want := r.Header.Get(HeaderInternalMCPMethod), "tools/call"; got != want {
+		if got, want := r.Header.Get(xhttp.HeaderInternalMCPMethod), "tools/call"; got != want {
 			t.Fatalf("method = %q, want %q", got, want)
 		}
-		if got, want := r.Header.Get(HeaderInternalMCPName), "pkgsite_search"; got != want {
+		if got, want := r.Header.Get(xhttp.HeaderInternalMCPName), "pkgsite_search"; got != want {
 			t.Fatalf("name = %q, want %q", got, want)
+		}
+		if got, want := r.Header.Get(xhttp.HeaderInternalMCPRequestID), "1"; got != want {
+			t.Fatalf("request id = %q, want %q", got, want)
+		}
+		if got, want := r.Header.Get(xhttp.HeaderInternalMCPClientAddress), "203.0.113.9"; got != want {
+			t.Fatalf("client address = %q, want %q", got, want)
+		}
+		if got, want := r.Header.Get(xhttp.HeaderInternalMCPClientPort), "54321"; got != want {
+			t.Fatalf("client port = %q, want %q", got, want)
 		}
 		gotBody, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -30,6 +41,8 @@ func TestMCPRequestMetadataExtractsToolCall(t *testing.T) {
 	}))
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", strings.NewReader(body))
+	req.Header.Set(xhttp.HeaderFlyClientIP, "203.0.113.9")
+	req.RemoteAddr = "198.51.100.10:54321"
 	handler.ServeHTTP(httptest.NewRecorder(), req)
 }
 
@@ -37,15 +50,18 @@ func TestMCPRequestMetadataExtractsListMethodWithoutName(t *testing.T) {
 	t.Parallel()
 
 	handler := MCPRequestMetadata(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		if got, want := r.Header.Get(HeaderInternalMCPMethod), "tools/list"; got != want {
+		if got, want := r.Header.Get(xhttp.HeaderInternalMCPMethod), "tools/list"; got != want {
 			t.Fatalf("method = %q, want %q", got, want)
 		}
-		if got := r.Header.Get(HeaderInternalMCPName); got != "" {
+		if got := r.Header.Get(xhttp.HeaderInternalMCPName); got != "" {
 			t.Fatalf("name = %q, want empty", got)
+		}
+		if got, want := r.Header.Get(xhttp.HeaderInternalMCPRequestID), "abc-123"; got != want {
+			t.Fatalf("request id = %q, want %q", got, want)
 		}
 	}))
 
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":"abc-123","method":"tools/list"}`))
 	handler.ServeHTTP(httptest.NewRecorder(), req)
 }
 
@@ -53,7 +69,7 @@ func TestMCPRequestMetadataSkipsNonMCPRequest(t *testing.T) {
 	t.Parallel()
 
 	handler := MCPRequestMetadata(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get(HeaderInternalMCPMethod); got != "" {
+		if got := r.Header.Get(xhttp.HeaderInternalMCPMethod); got != "" {
 			t.Fatalf("method = %q, want empty", got)
 		}
 	}))
@@ -66,17 +82,29 @@ func TestMCPRequestMetadataClearsCallerSuppliedInternalHeaders(t *testing.T) {
 	t.Parallel()
 
 	handler := MCPRequestMetadata(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get(HeaderInternalMCPMethod); got != "" {
+		if got := r.Header.Get(xhttp.HeaderInternalMCPMethod); got != "" {
 			t.Fatalf("method = %q, want empty", got)
 		}
-		if got := r.Header.Get(HeaderInternalMCPName); got != "" {
+		if got := r.Header.Get(xhttp.HeaderInternalMCPName); got != "" {
 			t.Fatalf("name = %q, want empty", got)
+		}
+		if got := r.Header.Get(xhttp.HeaderInternalMCPRequestID); got != "" {
+			t.Fatalf("request id = %q, want empty", got)
+		}
+		if got := r.Header.Get(xhttp.HeaderInternalMCPClientAddress); got != "" {
+			t.Fatalf("client address = %q, want empty", got)
+		}
+		if got := r.Header.Get(xhttp.HeaderInternalMCPClientPort); got != "" {
+			t.Fatalf("client port = %q, want empty", got)
 		}
 	}))
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/other", strings.NewReader(`{"method":"tools/list"}`))
-	req.Header.Set(HeaderInternalMCPMethod, "tools/call")
-	req.Header.Set(HeaderInternalMCPName, "pkgsite_search")
+	req.Header.Set(xhttp.HeaderInternalMCPClientAddress, "203.0.113.9")
+	req.Header.Set(xhttp.HeaderInternalMCPClientPort, "54321")
+	req.Header.Set(xhttp.HeaderInternalMCPMethod, "tools/call")
+	req.Header.Set(xhttp.HeaderInternalMCPName, "pkgsite_search")
+	req.Header.Set(xhttp.HeaderInternalMCPRequestID, "1")
 	handler.ServeHTTP(httptest.NewRecorder(), req)
 }
 
@@ -85,7 +113,7 @@ func TestMCPRequestMetadataSkipsUnknownLengthBodyWithoutTruncating(t *testing.T)
 
 	body := strings.Repeat("x", int(maxMCPMetadataBodyBytes)+1)
 	handler := MCPRequestMetadata(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get(HeaderInternalMCPMethod); got != "" {
+		if got := r.Header.Get(xhttp.HeaderInternalMCPMethod); got != "" {
 			t.Fatalf("method = %q, want empty", got)
 		}
 		gotBody, err := io.ReadAll(r.Body)
@@ -99,7 +127,7 @@ func TestMCPRequestMetadataSkipsUnknownLengthBodyWithoutTruncating(t *testing.T)
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", strings.NewReader(body))
 	req.ContentLength = -1
-	req.Header.Set(HeaderInternalMCPMethod, "tools/list")
+	req.Header.Set(xhttp.HeaderInternalMCPMethod, "tools/list")
 	handler.ServeHTTP(httptest.NewRecorder(), req)
 }
 
@@ -108,7 +136,7 @@ func TestMCPRequestMetadataRestoresPartialBodyAfterReadError(t *testing.T) {
 
 	const body = `{"jsonrpc":"2.0"`
 	handler := MCPRequestMetadata(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get(HeaderInternalMCPMethod); got != "" {
+		if got := r.Header.Get(xhttp.HeaderInternalMCPMethod); got != "" {
 			t.Fatalf("method = %q, want empty", got)
 		}
 		gotBody, err := io.ReadAll(r.Body)

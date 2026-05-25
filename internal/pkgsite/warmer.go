@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/garrettladley/pkgsite-mcp/internal/observability"
+	"github.com/garrettladley/pkgsite-mcp/internal/xcontext"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
@@ -74,7 +75,7 @@ func (w *AsyncWarmer) Warm(ctx context.Context, jobs ...WarmJob) {
 				defer cancel()
 				jobCtx, span := observability.Tracer("pkgsite-warm").Start(jobCtx, "pkgsite.warm "+string(job.Kind), trace.WithAttributes(observability.WarmAttrs{Kind: string(job.Kind), Drain: job.Drain}.Attributes()...))
 				defer span.End()
-				outcome, err := w.run(withoutWarming(jobCtx), job)
+				outcome, err := w.run(xcontext.WithoutWarming(jobCtx), job)
 				if err != nil {
 					span.RecordError(err)
 					span.SetStatus(codes.Error, err.Error())
@@ -177,15 +178,4 @@ func (j *WarmJob) setToken(token string) bool {
 		return false
 	}
 	return true
-}
-
-type warmingContextKey struct{}
-
-func withoutWarming(ctx context.Context) context.Context {
-	return context.WithValue(ctx, warmingContextKey{}, true)
-}
-
-func warmingDisabled(ctx context.Context) bool {
-	disabled, _ := ctx.Value(warmingContextKey{}).(bool)
-	return disabled
 }

@@ -21,6 +21,7 @@ import (
 	sentryobs "github.com/garrettladley/pkgsite-mcp/internal/observability/sentry"
 	"github.com/garrettladley/pkgsite-mcp/internal/pkgsite"
 	"github.com/garrettladley/pkgsite-mcp/internal/version"
+	"github.com/garrettladley/pkgsite-mcp/internal/xhttp"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
@@ -156,9 +157,9 @@ func httpSpanName(_ string, r *http.Request) string {
 			name = r.Method + " " + r.Pattern
 		}
 	}
-	if method := r.Header.Get(middleware.HeaderInternalMCPMethod); method != "" {
+	if method := r.Header.Get(xhttp.HeaderInternalMCPMethod); method != "" {
 		name += " " + method
-		if mcpName := r.Header.Get(middleware.HeaderInternalMCPName); mcpName != "" {
+		if mcpName := r.Header.Get(xhttp.HeaderInternalMCPName); mcpName != "" {
 			name += " " + mcpName
 		}
 	}

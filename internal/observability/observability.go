@@ -37,6 +37,7 @@ type Backend interface {
 
 type BackendHandle interface {
 	TraceExporter() sdktrace.SpanExporter
+	TraceProcessors() []sdktrace.SpanProcessor
 	LogHandler() slog.Handler
 	MetricSink() MetricSink
 	Middleware(http.Handler) http.Handler
@@ -96,6 +97,13 @@ func Setup(ctx context.Context, opts Options, logger *slog.Logger, backend Backe
 	}
 
 	var tpOpts []sdktrace.TracerProviderOption
+	if backendHandle != nil {
+		for _, processor := range backendHandle.TraceProcessors() {
+			if processor != nil {
+				tpOpts = append(tpOpts, sdktrace.WithSpanProcessor(processor))
+			}
+		}
+	}
 	if backendHandle != nil && backendHandle.TraceExporter() != nil {
 		tpOpts = append(tpOpts, sdktrace.WithBatcher(backendHandle.TraceExporter()))
 	}

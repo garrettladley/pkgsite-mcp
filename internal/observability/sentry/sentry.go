@@ -13,7 +13,6 @@ import (
 	getsentry "github.com/getsentry/sentry-go"
 	sentryattribute "github.com/getsentry/sentry-go/attribute"
 	sentryotel "github.com/getsentry/sentry-go/otel"
-	sentryotlp "github.com/getsentry/sentry-go/otel/otlp"
 	sentryslog "github.com/getsentry/sentry-go/slog"
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -49,13 +48,10 @@ func (b Backend) Start(ctx context.Context, opts observability.Options, _ *slog.
 		return nil, fmt.Errorf("initialize sentry: %w", err)
 	}
 
-	exporter, err := sentryotlp.NewTraceExporter(ctx, b.dsn)
-	if err != nil {
-		return nil, fmt.Errorf("initialize sentry trace exporter: %w", err)
-	}
-
 	handle := &Handle{
-		exporter:     exporter,
+		processors: []sdktrace.SpanProcessor{
+			newMCPSpanProcessor(),
+		},
 		flushTimeout: opts.FlushTimeout,
 	}
 	if opts.EnableLogs {
@@ -87,7 +83,7 @@ func (b Backend) Start(ctx context.Context, opts observability.Options, _ *slog.
 }
 
 type Handle struct {
-	exporter     sdktrace.SpanExporter
+	processors   []sdktrace.SpanProcessor
 	logHandler   slog.Handler
 	metricSink   observability.MetricSink
 	flushTimeout time.Duration
@@ -99,7 +95,11 @@ var (
 )
 
 func (h *Handle) TraceExporter() sdktrace.SpanExporter {
-	return h.exporter
+	return nil
+}
+
+func (h *Handle) TraceProcessors() []sdktrace.SpanProcessor {
+	return h.processors
 }
 
 func (h *Handle) LogHandler() slog.Handler {
