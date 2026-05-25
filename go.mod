@@ -3,7 +3,6 @@ module github.com/garrettladley/pkgsite-mcp
 go 1.26
 
 require (
-	github.com/caarlos0/env/v11 v11.3.1
 	github.com/getsentry/sentry-go v0.46.2
 	github.com/getsentry/sentry-go/otel v0.46.2
 	github.com/getsentry/sentry-go/slog v0.46.2

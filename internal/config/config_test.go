@@ -3,14 +3,12 @@ package config
 import (
 	"testing"
 	"time"
-
-	"github.com/caarlos0/env/v11"
 )
 
 func TestReadDefaults(t *testing.T) {
 	t.Parallel()
 
-	got, err := read(env.Options{Environment: map[string]string{}})
+	got, err := read(mapGetenv(map[string]string{}))
 	if err != nil {
 		t.Fatalf("Read returned error: %v", err)
 	}
@@ -58,7 +56,7 @@ func TestReadDefaults(t *testing.T) {
 func TestReadOverrides(t *testing.T) {
 	t.Parallel()
 
-	got, err := read(env.Options{Environment: map[string]string{
+	got, err := read(mapGetenv(map[string]string{
 		"PORT":                    "9090",
 		"O11Y_SERVICE_NAME":       "pkgsite-test",
 		"O11Y_ENVIRONMENT":        "test",
@@ -74,7 +72,7 @@ func TestReadOverrides(t *testing.T) {
 		"RATE_LIMIT_REQUESTS":     "10",
 		"RATE_LIMIT_WINDOW":       "30s",
 		"SENTRY_DSN":              "https://public@example.invalid/1",
-	}})
+	}))
 	if err != nil {
 		t.Fatalf("Read returned error: %v", err)
 	}
@@ -128,5 +126,43 @@ func TestReadOverrides(t *testing.T) {
 	}
 	if got.Observability.EnableMetrics {
 		t.Fatal("EnableMetrics = true, want false")
+	}
+}
+
+func TestReadParseError(t *testing.T) {
+	t.Parallel()
+
+	_, err := read(mapGetenv(map[string]string{"RATE_LIMIT_REQUESTS": "lots"}))
+	if err == nil {
+		t.Fatal("Read returned nil error, want parse error")
+	}
+	const want = `config: parsing RATE_LIMIT_REQUESTS="lots": strconv.Atoi: parsing "lots": invalid syntax`
+	if err.Error() != want {
+		t.Fatalf("error = %q, want %q", err, want)
+	}
+}
+
+func TestReadParseErrorReportsAllFailures(t *testing.T) {
+	t.Parallel()
+
+	_, err := read(mapGetenv(map[string]string{
+		"O11Y_FLUSH_TIMEOUT":   "soon",
+		"PKGSITE_HTTP_TIMEOUT": "later",
+		"RATE_LIMIT_REQUESTS":  "lots",
+	}))
+	if err == nil {
+		t.Fatal("Read returned nil error, want parse error")
+	}
+	const want = `config: parsing O11Y_FLUSH_TIMEOUT="soon": time: invalid duration "soon"
+config: parsing PKGSITE_HTTP_TIMEOUT="later": time: invalid duration "later"
+config: parsing RATE_LIMIT_REQUESTS="lots": strconv.Atoi: parsing "lots": invalid syntax`
+	if err.Error() != want {
+		t.Fatalf("error = %q, want %q", err, want)
+	}
+}
+
+func mapGetenv(env map[string]string) func(string) string {
+	return func(key string) string {
+		return env[key]
 	}
 }
