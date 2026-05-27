@@ -41,7 +41,7 @@ func RateLimit(store kv.Store, cfg config.RateLimit, logger *slog.Logger) Middle
 			key := rateLimitKey(ip, cfg.Window, now)
 			count, err := store.Increment(r.Context(), key, cfg.Window+time.Second)
 			if err != nil {
-				if errors.Is(err, context.Canceled) {
+				if isContextEnded(err) {
 					trace.SpanFromContext(r.Context()).SetAttributes(observability.RateLimitAttrs{Outcome: observability.RateLimitOutcomeCanceled, Limit: cfg.Requests, Window: cfg.Window}.Attributes()...)
 					return
 				}
@@ -64,6 +64,10 @@ func RateLimit(store kv.Store, cfg config.RateLimit, logger *slog.Logger) Middle
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func isContextEnded(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func rateLimitKey(ip string, window time.Duration, now time.Time) string {
