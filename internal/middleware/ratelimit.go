@@ -41,8 +41,8 @@ func RateLimit(store kv.Store, cfg config.RateLimit, logger *slog.Logger) Middle
 			key := rateLimitKey(ip, cfg.Window, now)
 			count, err := store.Increment(r.Context(), key, cfg.Window+time.Second)
 			if err != nil {
-				if isContextEnded(err) {
-					trace.SpanFromContext(r.Context()).SetAttributes(observability.RateLimitAttrs{Outcome: observability.RateLimitOutcomeCanceled, Limit: cfg.Requests, Window: cfg.Window}.Attributes()...)
+				if outcome, ok := rateLimitContextOutcome(err); ok {
+					trace.SpanFromContext(r.Context()).SetAttributes(observability.RateLimitAttrs{Outcome: outcome, Limit: cfg.Requests, Window: cfg.Window}.Attributes()...)
 					return
 				}
 				trace.SpanFromContext(r.Context()).SetAttributes(observability.RateLimitAttrs{Outcome: observability.RateLimitOutcomeStoreError, Limit: cfg.Requests, Window: cfg.Window}.Attributes()...)
@@ -66,8 +66,15 @@ func RateLimit(store kv.Store, cfg config.RateLimit, logger *slog.Logger) Middle
 	}
 }
 
-func isContextEnded(err error) bool {
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+func rateLimitContextOutcome(err error) (observability.RateLimitOutcome, bool) {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return observability.RateLimitOutcomeCanceled, true
+	case errors.Is(err, context.DeadlineExceeded):
+		return observability.RateLimitOutcomeDeadline, true
+	default:
+		return "", false
+	}
 }
 
 func rateLimitKey(ip string, window time.Duration, now time.Time) string {

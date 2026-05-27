@@ -13,6 +13,7 @@ import (
 
 	"github.com/garrettladley/pkgsite-mcp/internal/config"
 	"github.com/garrettladley/pkgsite-mcp/internal/kv"
+	"github.com/garrettladley/pkgsite-mcp/internal/observability"
 	"github.com/garrettladley/pkgsite-mcp/internal/xhttp"
 )
 
@@ -109,6 +110,35 @@ func TestRateLimitDoesNotLogEndedRequestsAsStoreErrors(t *testing.T) {
 
 			if got := errorLogs.Load(); got != 0 {
 				t.Fatalf("error logs = %d, want 0", got)
+			}
+		})
+	}
+}
+
+func TestRateLimitContextOutcome(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want observability.RateLimitOutcome
+		ok   bool
+	}{
+		{name: "canceled", err: context.Canceled, want: observability.RateLimitOutcomeCanceled, ok: true},
+		{name: "deadline_exceeded", err: context.DeadlineExceeded, want: observability.RateLimitOutcomeDeadline, ok: true},
+		{name: "other", err: errors.New("redis down"), ok: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, ok := rateLimitContextOutcome(tt.err)
+			if ok != tt.ok {
+				t.Fatalf("ok = %t, want %t", ok, tt.ok)
+			}
+			if got != tt.want {
+				t.Fatalf("outcome = %q, want %q", got, tt.want)
 			}
 		})
 	}
