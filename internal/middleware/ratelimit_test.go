@@ -3,9 +3,11 @@ package middleware
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -78,6 +80,33 @@ func TestRateLimitFailsClosedOnStoreError(t *testing.T) {
 	}
 }
 
+func TestRateLimitDoesNotLogCanceledRequestsAsStoreErrors(t *testing.T) {
+	t.Parallel()
+
+	var errorLogs atomic.Int64
+	logger := slog.New(countingErrorHandler{count: &errorLogs})
+	store := incrementFunc(func(ctx context.Context, _ string, _ time.Duration) (int64, error) {
+		return 0, ctx.Err()
+	})
+	handler := RateLimit(store, config.RateLimit{Enabled: true, Requests: 2, Window: time.Minute}, logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://example.test/mcp", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.RemoteAddr = "203.0.113.10:1234"
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if got := errorLogs.Load(); got != 0 {
+		t.Fatalf("error logs = %d, want 0", got)
+	}
+}
+
 func TestClientIPPrefersFlyHeaderAndNormalizes(t *testing.T) {
 	t.Parallel()
 
@@ -113,4 +142,29 @@ func (f incrementFunc) Set(context.Context, string, []byte, time.Duration) error
 
 func (f incrementFunc) Increment(ctx context.Context, key string, ttl time.Duration) (int64, error) {
 	return f(ctx, key, ttl)
+}
+
+type countingErrorHandler struct {
+	count *atomic.Int64
+}
+
+var _ slog.Handler = countingErrorHandler{}
+
+func (h countingErrorHandler) Enabled(_ context.Context, level slog.Level) bool {
+	return level >= slog.LevelError
+}
+
+func (h countingErrorHandler) Handle(_ context.Context, record slog.Record) error {
+	if record.Level >= slog.LevelError {
+		h.count.Add(1)
+	}
+	return nil
+}
+
+func (h countingErrorHandler) WithAttrs([]slog.Attr) slog.Handler {
+	return h
+}
+
+func (h countingErrorHandler) WithGroup(string) slog.Handler {
+	return h
 }

@@ -1,8 +1,10 @@
 package middleware
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -39,6 +41,10 @@ func RateLimit(store kv.Store, cfg config.RateLimit, logger *slog.Logger) Middle
 			key := rateLimitKey(ip, cfg.Window, now)
 			count, err := store.Increment(r.Context(), key, cfg.Window+time.Second)
 			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					trace.SpanFromContext(r.Context()).SetAttributes(observability.RateLimitAttrs{Outcome: observability.RateLimitOutcomeCanceled, Limit: cfg.Requests, Window: cfg.Window}.Attributes()...)
+					return
+				}
 				trace.SpanFromContext(r.Context()).SetAttributes(observability.RateLimitAttrs{Outcome: observability.RateLimitOutcomeStoreError, Limit: cfg.Requests, Window: cfg.Window}.Attributes()...)
 				logger.ErrorContext(r.Context(), "rate limit check failed", slog.Any("error", err), slog.String("client_ip", ip))
 				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
