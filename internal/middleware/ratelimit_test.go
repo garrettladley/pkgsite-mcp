@@ -80,30 +80,37 @@ func TestRateLimitFailsClosedOnStoreError(t *testing.T) {
 	}
 }
 
-func TestRateLimitDoesNotLogCanceledRequestsAsStoreErrors(t *testing.T) {
+func TestRateLimitDoesNotLogEndedRequestsAsStoreErrors(t *testing.T) {
 	t.Parallel()
 
-	var errorLogs atomic.Int64
-	logger := slog.New(countingErrorHandler{count: &errorLogs})
-	store := incrementFunc(func(ctx context.Context, _ string, _ time.Duration) (int64, error) {
-		return 0, ctx.Err()
-	})
-	handler := RateLimit(store, config.RateLimit{Enabled: true, Requests: 2, Window: time.Minute}, logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://example.test/mcp", nil)
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "canceled", err: context.Canceled},
+		{name: "deadline_exceeded", err: context.DeadlineExceeded},
 	}
-	req.RemoteAddr = "203.0.113.10:1234"
 
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	if got := errorLogs.Load(); got != 0 {
-		t.Fatalf("error logs = %d, want 0", got)
+			var errorLogs atomic.Int64
+			logger := slog.New(countingErrorHandler{count: &errorLogs})
+			store := incrementFunc(func(context.Context, string, time.Duration) (int64, error) {
+				return 0, tt.err
+			})
+			handler := RateLimit(store, config.RateLimit{Enabled: true, Requests: 2, Window: time.Minute}, logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			}))
+
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, requestWithIP(t, "203.0.113.10:1234"))
+
+			if got := errorLogs.Load(); got != 0 {
+				t.Fatalf("error logs = %d, want 0", got)
+			}
+		})
 	}
 }
 
