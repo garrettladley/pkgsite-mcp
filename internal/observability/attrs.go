@@ -129,6 +129,7 @@ const (
 	RateLimitOutcomeLimited    RateLimitOutcome = "limited"
 	RateLimitOutcomeStoreError RateLimitOutcome = "store_error"
 	RateLimitOutcomeCanceled   RateLimitOutcome = "canceled"
+	RateLimitOutcomeDeadline   RateLimitOutcome = "deadline_exceeded"
 	RateLimitOutcomeDisabled   RateLimitOutcome = "disabled"
 	RateLimitOutcomeSkipped    RateLimitOutcome = "skipped"
 )
