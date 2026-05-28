@@ -25,7 +25,25 @@ type Pkgsite struct {
 }
 
 type KV struct {
-	RedisURL string
+	RedisURL             string
+	RedisPool            RedisPool
+	RedisTimeouts        RedisTimeouts
+	RedisConnMaxIdle     time.Duration
+	RedisDisableIdentity bool
+}
+
+type RedisPool struct {
+	Size           int
+	MinIdleConns   int
+	MaxIdleConns   int
+	MaxActiveConns int
+	Timeout        time.Duration
+}
+
+type RedisTimeouts struct {
+	Dial  time.Duration
+	Read  time.Duration
+	Write time.Duration
 }
 
 type RateLimit struct {
@@ -62,6 +80,20 @@ func read(getenv func(string) string) (Config, error) {
 		Port: p.str("PORT", "8080"),
 		KV: KV{
 			RedisURL: p.str("KV_REDIS_URL", ""),
+			RedisPool: RedisPool{
+				Size:           p.intVal("KV_REDIS_POOL_SIZE", 4),
+				MinIdleConns:   p.intVal("KV_REDIS_MIN_IDLE_CONNS", 2),
+				MaxIdleConns:   p.intVal("KV_REDIS_MAX_IDLE_CONNS", 4),
+				MaxActiveConns: p.intVal("KV_REDIS_MAX_ACTIVE_CONNS", 8),
+				Timeout:        p.duration("KV_REDIS_POOL_TIMEOUT", 250*time.Millisecond),
+			},
+			RedisTimeouts: RedisTimeouts{
+				Dial:  p.duration("KV_REDIS_DIAL_TIMEOUT", time.Second),
+				Read:  p.duration("KV_REDIS_READ_TIMEOUT", 750*time.Millisecond),
+				Write: p.duration("KV_REDIS_WRITE_TIMEOUT", 750*time.Millisecond),
+			},
+			RedisConnMaxIdle:     p.duration("KV_REDIS_CONN_MAX_IDLE_TIME", 10*time.Minute),
+			RedisDisableIdentity: p.boolean("KV_REDIS_DISABLE_IDENTITY", true),
 		},
 		Observability: Observability{
 			ServiceName:      p.str("O11Y_SERVICE_NAME", "pkgsite-mcp"),

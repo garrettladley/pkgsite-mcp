@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/garrettladley/pkgsite-mcp/internal/config"
 	"github.com/garrettladley/pkgsite-mcp/internal/kv"
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	goredis "github.com/redis/go-redis/v9"
@@ -23,18 +24,19 @@ type Store struct {
 
 var _ kv.Store = (*Store)(nil)
 
-func New(redisURL string) (kv.Store, error) {
-	if redisURL == "" {
+func New(cfg config.KV) (kv.Store, error) {
+	if cfg.RedisURL == "" {
 		return nil, nil
 	}
-	return NewStore(redisURL)
+	return NewStore(cfg)
 }
 
-func NewStore(redisURL string) (*Store, error) {
-	opts, err := goredis.ParseURL(redisURL)
+func NewStore(cfg config.KV) (*Store, error) {
+	opts, err := goredis.ParseURL(cfg.RedisURL)
 	if err != nil {
 		return nil, err
 	}
+	applyOptions(opts, cfg)
 	client := goredis.NewClient(opts)
 	if err := redisotel.InstrumentTracing(client); err != nil {
 		return nil, err
@@ -43,6 +45,19 @@ func NewStore(redisURL string) (*Store, error) {
 		return nil, err
 	}
 	return &Store{client: client}, nil
+}
+
+func applyOptions(opts *goredis.Options, cfg config.KV) {
+	opts.DisableIdentity = cfg.RedisDisableIdentity
+	opts.PoolSize = cfg.RedisPool.Size
+	opts.MinIdleConns = cfg.RedisPool.MinIdleConns
+	opts.MaxIdleConns = cfg.RedisPool.MaxIdleConns
+	opts.MaxActiveConns = cfg.RedisPool.MaxActiveConns
+	opts.PoolTimeout = cfg.RedisPool.Timeout
+	opts.DialTimeout = cfg.RedisTimeouts.Dial
+	opts.ReadTimeout = cfg.RedisTimeouts.Read
+	opts.WriteTimeout = cfg.RedisTimeouts.Write
+	opts.ConnMaxIdleTime = cfg.RedisConnMaxIdle
 }
 
 func (s *Store) Get(ctx context.Context, key string) ([]byte, error) {
