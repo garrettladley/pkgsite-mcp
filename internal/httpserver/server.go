@@ -59,7 +59,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	}()
 	logger = obs.Logger
 
-	store, err := kvredis.New(cfg.KV.RedisURL)
+	store, err := kvredis.New(cfg.KV)
 	if err != nil {
 		return fmt.Errorf("configure kv store: %w", err)
 	}

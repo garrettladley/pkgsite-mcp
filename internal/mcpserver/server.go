@@ -51,7 +51,7 @@ func RunStdio(ctx context.Context) error {
 		}
 	}()
 
-	store, err := kvredis.New(cfg.KV.RedisURL)
+	store, err := kvredis.New(cfg.KV)
 	if err != nil {
 		return fmt.Errorf("configure kv store: %w", err)
 	}
