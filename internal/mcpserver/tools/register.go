@@ -62,7 +62,9 @@ func (s *service) result(ctx context.Context, result pkgsite.Result, page pkgsit
 	resultAttrs := observability.ResultAttrs{FromCache: result.FromCache, UpstreamURLPresent: result.UpstreamURL != "", ResultCount: len(result.Items)}
 	if result.Error != nil {
 		resultAttrs.ErrorStatusCode = result.Error.StatusCode
-		span.SetStatus(codes.Error, result.Error.Status)
+		if unexpectedPkgsiteStatus(result.Error.StatusCode) {
+			span.SetStatus(codes.Error, result.Error.Status)
+		}
 	}
 	span.SetAttributes(resultAttrs.Attributes()...)
 	opts := envelopeOptions{Source: pkgsite.DefaultBaseURL, UpstreamURL: result.UpstreamURL, ToolName: toolName, NextArgs: nextArgs}
@@ -72,6 +74,10 @@ func (s *service) result(ctx context.Context, result pkgsite.Result, page pkgsit
 	}
 	span.SetAttributes(observability.EnvelopeAttrs{DisplayedItems: 1, TotalItems: 1, MaxTokens: page.MaxTokens}.Attributes()...)
 	return textResult(singleEnvelope(result, opts)), nil, nil
+}
+
+func unexpectedPkgsiteStatus(statusCode int) bool {
+	return statusCode >= 500
 }
 
 func toolAttrs(toolName string, args map[string]any, result pkgsite.Result) observability.ToolAttrs {
