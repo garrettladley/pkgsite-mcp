@@ -329,6 +329,7 @@ func EndpointFromURL(u *url.URL) PkgsiteEndpoint {
 		return PkgsiteEndpointUnknown
 	}
 	path := strings.TrimPrefix(u.EscapedPath(), "/")
+	path = strings.TrimPrefix(path, "v1/")
 	path = strings.TrimPrefix(path, "v1beta/")
 	switch {
 	case path == "search":

@@ -37,7 +37,7 @@ func New(cfg config.Pkgsite, store kv.Store, opts ...Option) (*Client, error) {
 	if timeout == 0 {
 		timeout = 10 * time.Second
 	}
-	doer := transport.NewCachedDoer(transport.NewHTTPClient(timeout), store, cfg.CacheDisabled)
+	doer := transport.NewCachedDoer(transport.NewHTTPClient(timeout, store), store, cfg.CacheDisabled)
 	api, err := pkgsiteapi.NewClientWithResponses(
 		baseURL,
 		pkgsiteapi.WithHTTPClient(doer),
@@ -128,16 +128,43 @@ func (c *Client) Package(ctx context.Context, input PackageInput) (Result, error
 		return resultError(resp.StatusCode(), resp.Status(), resp.Body, resp.HTTPResponse), nil
 	}
 	pkg := resp.JSON200
+	summary := packageSummary(pkg, input, resp.Body)
 	result := Result{
-		Summary: map[string]any{
-			"kind": "package", "path": input.PackagePath, "modulePath": stringVal(pkg.ModulePath, input.ModulePath),
-			"version": stringVal(pkg.Version, input.Version), "goos": stringVal(pkg.Goos, input.Goos), "goarch": stringVal(pkg.Goarch, input.Goarch),
-			"isLatest": boolVal(pkg.IsLatest), "isStandardLibrary": boolVal(pkg.IsStandardLibrary), "importCount": lenStringSlice(pkg.Imports),
-		},
-		Raw: pkg, UpstreamURL: requestURL(resp.HTTPResponse), FromCache: fromCache(resp.HTTPResponse),
+		Summary: summary,
+		Raw:     pkg, UpstreamURL: requestURL(resp.HTTPResponse), FromCache: fromCache(resp.HTTPResponse),
 	}
 	c.warm(ctx, WarmJob{Kind: WarmSymbols, Symbols: SymbolsInput{PackagePath: stringValue(result.Summary["path"], input.PackagePath), ModulePath: stringValue(result.Summary["modulePath"], input.ModulePath), Version: stringValue(result.Summary["version"], input.Version)}, Drain: true})
 	return result, nil
+}
+
+func packageSummary(pkg *pkgsiteapi.Package, input PackageInput, body []byte) map[string]any {
+	summary := map[string]any{
+		"kind": "package", "path": input.PackagePath, "modulePath": stringVal(pkg.ModulePath, input.ModulePath),
+		"version": stringVal(pkg.Version, input.Version), "goos": stringVal(pkg.Goos, input.Goos), "goarch": stringVal(pkg.Goarch, input.Goarch),
+		"isLatest": boolVal(pkg.IsLatest), "isRedistributable": boolVal(pkg.IsRedistributable), "isStandardLibrary": boolVal(pkg.IsStandardLibrary),
+		"name": stringVal(pkg.Name, ""), "synopsis": stringVal(pkg.Synopsis, ""), "importCount": lenStringSlice(pkg.Imports),
+	}
+	var identity struct {
+		Path              *string `json:"path"`
+		Name              *string `json:"name"`
+		Synopsis          *string `json:"synopsis"`
+		IsRedistributable *bool   `json:"isRedistributable"`
+	}
+	if json.Unmarshal(body, &identity) == nil {
+		if identity.Path != nil {
+			summary["path"] = *identity.Path
+		}
+		if identity.Name != nil {
+			summary["name"] = *identity.Name
+		}
+		if identity.Synopsis != nil {
+			summary["synopsis"] = *identity.Synopsis
+		}
+		if identity.IsRedistributable != nil {
+			summary["isRedistributable"] = *identity.IsRedistributable
+		}
+	}
+	return summary
 }
 
 func (c *Client) Versions(ctx context.Context, input VersionsInput) (Result, error) {
@@ -246,10 +273,34 @@ func resultError(statusCode int, status string, body []byte, resp *http.Response
 		raw = append(raw, body...)
 	}
 	message := strings.TrimSpace(string(body))
+	var details struct {
+		Code       *int        `json:"code"`
+		Message    string      `json:"message"`
+		Fixes      []string    `json:"fixes"`
+		Candidates []Candidate `json:"candidates"`
+	}
+	if raw != nil && json.Unmarshal(raw, &details) == nil {
+		if strings.TrimSpace(details.Message) != "" {
+			message = strings.TrimSpace(details.Message)
+		}
+	}
 	if len(message) > 500 {
 		message = message[:500]
 	}
-	return Result{Error: &APIError{StatusCode: statusCode, Status: status, Message: message, Body: raw}, UpstreamURL: requestURL(resp), FromCache: fromCache(resp)}
+	retryAfter := ""
+	if resp != nil {
+		retryAfter = resp.Header.Get("Retry-After")
+	}
+	return Result{Error: &APIError{
+		StatusCode: statusCode,
+		Status:     status,
+		Code:       details.Code,
+		Message:    message,
+		Fixes:      details.Fixes,
+		Candidates: details.Candidates,
+		RetryAfter: retryAfter,
+		Body:       raw,
+	}, UpstreamURL: requestURL(resp), FromCache: fromCache(resp)}
 }
 
 func paginatedItems(page any) []map[string]any {

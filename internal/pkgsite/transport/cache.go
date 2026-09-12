@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +25,10 @@ import (
 )
 
 const CacheHitHeader = "X-Pkgsite-Mcp-Cache-Hit"
+
+const cacheKeyPrefix = "pkgsite:v1:http:"
+
+const upstreamRequestsPerSecond = 45
 
 type CachedDoer struct {
 	client *http.Client
@@ -41,12 +46,17 @@ type cachedResponse struct {
 	Body       []byte      `json:"body"`
 }
 
-func NewHTTPClient(timeout time.Duration) *http.Client {
+func NewHTTPClient(timeout time.Duration, store kv.Store) *http.Client {
 	base := &http.Client{Timeout: timeout}
+	upstream := &redisRateLimitedTransport{
+		base:  otelhttp.NewTransport(http.DefaultTransport),
+		store: store,
+		limit: upstreamRequestsPerSecond,
+	}
 	return &http.Client{
 		Timeout: timeout,
 		Transport: retryTransport{
-			base: otelhttp.NewTransport(http.DefaultTransport),
+			base: upstream,
 		},
 		CheckRedirect: base.CheckRedirect,
 	}
@@ -69,7 +79,7 @@ func (d *CachedDoer) Do(req *http.Request) (*http.Response, error) {
 	req = req.WithContext(ctx)
 	start := time.Now()
 	key := cacheKey(req)
-	keyHash := strings.TrimPrefix(key, "pkgsite:v1beta:http:")
+	keyHash := strings.TrimPrefix(key, cacheKeyPrefix)
 	cached, err := d.store.Get(req.Context(), key)
 	switch {
 	case err == nil:
@@ -219,10 +229,15 @@ func cacheKey(req *http.Request) string {
 	}
 	u.RawQuery = values.Encode()
 	sum := sha256.Sum256([]byte(req.Method + " " + u.String()))
-	return "pkgsite:v1beta:http:" + hex.EncodeToString(sum[:])
+	return cacheKeyPrefix + hex.EncodeToString(sum[:])
 }
 
 func cacheTTL(u *url.URL, status int) time.Duration {
+	// A rate-limit response is transient and may include a Retry-After hint.
+	// Caching it would turn one upstream rejection into repeated local errors.
+	if status == http.StatusTooManyRequests {
+		return 0
+	}
 	if status >= 500 {
 		return time.Minute
 	}
@@ -247,6 +262,63 @@ type retryTransport struct {
 	base http.RoundTripper
 }
 
+type redisRateLimitedTransport struct {
+	base  http.RoundTripper
+	store kv.Store
+	limit int
+}
+
+var _ http.RoundTripper = (*redisRateLimitedTransport)(nil)
+
+func (t *redisRateLimitedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if err := waitForUpstreamRateLimit(req.Context(), t.store, t.limit); err != nil {
+		return nil, err
+	}
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return base.RoundTrip(req)
+}
+
+const upstreamRateLimitKeyPrefix = "pkgsite:mcp:ratelimit:upstream:"
+
+func waitForUpstreamRateLimit(ctx context.Context, store kv.Store, limit int) error {
+	if store == nil || limit <= 0 {
+		return nil
+	}
+
+	for {
+		now := time.Now()
+		reset := now.Truncate(time.Second).Add(time.Second)
+		ttl := time.Until(reset) + time.Second
+		count, err := store.Increment(ctx, upstreamRateLimitKey(now), ttl)
+		if err != nil {
+			return err
+		}
+		if count <= int64(limit) {
+			return nil
+		}
+
+		timer := time.NewTimer(time.Until(reset))
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func upstreamRateLimitKey(now time.Time) string {
+	return upstreamRateLimitKeyPrefix + strconv.FormatInt(now.Unix(), 10)
+}
+
 func (t retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	base := t.base
 	if base == nil {
@@ -266,7 +338,7 @@ func (t retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		resp, err := base.RoundTrip(req)
 		if err != nil {
 			lastErr = err
-			if errors.Is(err, context.Canceled) {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return nil, err
 			}
 			continue

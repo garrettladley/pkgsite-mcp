@@ -10,7 +10,7 @@ type SearchInput struct {
 	Symbol string `json:"symbol,omitempty" jsonschema:"Optional symbol search string."`
 	Limit  int    `json:"limit,omitempty" jsonschema:"Upstream max number of items."`
 	Token  string `json:"token,omitempty" jsonschema:"Upstream page token."`
-	Filter string `json:"filter,omitempty" jsonschema:"Regular expression filter."`
+	Filter string `json:"filter,omitempty" jsonschema:"Go expression filter."`
 	PageInput
 }
 
@@ -39,7 +39,7 @@ type VersionsInput struct {
 	ModulePath string `json:"module_path" jsonschema:"Go module path."`
 	Limit      int    `json:"limit,omitempty" jsonschema:"Upstream max number of items."`
 	Token      string `json:"token,omitempty" jsonschema:"Upstream page token."`
-	Filter     string `json:"filter,omitempty" jsonschema:"Regular expression filter."`
+	Filter     string `json:"filter,omitempty" jsonschema:"Go expression filter."`
 	PageInput
 }
 
@@ -48,7 +48,7 @@ type PackagesInput struct {
 	Version    string `json:"version,omitempty" jsonschema:"Version, latest, main, or master. Latest if omitted."`
 	Limit      int    `json:"limit,omitempty" jsonschema:"Upstream max number of items."`
 	Token      string `json:"token,omitempty" jsonschema:"Upstream page token."`
-	Filter     string `json:"filter,omitempty" jsonschema:"Regular expression filter."`
+	Filter     string `json:"filter,omitempty" jsonschema:"Go expression filter."`
 	PageInput
 }
 
@@ -60,7 +60,7 @@ type SymbolsInput struct {
 	Goarch      string `json:"goarch,omitempty" jsonschema:"GOARCH documentation context."`
 	Limit       int    `json:"limit,omitempty" jsonschema:"Upstream max number of items."`
 	Token       string `json:"token,omitempty" jsonschema:"Upstream page token."`
-	Filter      string `json:"filter,omitempty" jsonschema:"Regular expression filter."`
+	Filter      string `json:"filter,omitempty" jsonschema:"Go expression filter."`
 	PageInput
 }
 
@@ -70,7 +70,7 @@ type ImportedByInput struct {
 	Version     string `json:"version,omitempty" jsonschema:"Version, latest, main, or master. Latest if omitted."`
 	Limit       int    `json:"limit,omitempty" jsonschema:"Upstream max number of items. Defaults to 25."`
 	Token       string `json:"token,omitempty" jsonschema:"Upstream page token."`
-	Filter      string `json:"filter,omitempty" jsonschema:"Regular expression filter."`
+	Filter      string `json:"filter,omitempty" jsonschema:"Go expression filter."`
 	PageInput
 }
 
@@ -80,7 +80,7 @@ type VulnsInput struct {
 	Version    string `json:"version,omitempty" jsonschema:"Version, latest, main, or master. Latest if omitted."`
 	Limit      int    `json:"limit,omitempty" jsonschema:"Upstream max number of items."`
 	Token      string `json:"token,omitempty" jsonschema:"Upstream page token."`
-	Filter     string `json:"filter,omitempty" jsonschema:"Regular expression filter."`
+	Filter     string `json:"filter,omitempty" jsonschema:"Go expression filter."`
 	PageInput
 }
 

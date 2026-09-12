@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -68,6 +69,125 @@ func TestCacheTTL(t *testing.T) {
 				t.Fatal("TTL is zero")
 			}
 		})
+	}
+
+	if got := cacheTTL(parseURLForTest(t, "https://pkg.go.dev/v1/search?q=uuid"), http.StatusTooManyRequests); got != 0 {
+		t.Fatalf("rate-limited response TTL = %s, want 0", got)
+	}
+}
+
+func TestRedisRateLimitedTransportHonorsCanceledContext(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int64
+	base := roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{},
+			Body:       io.NopCloser(bytes.NewReader(nil)),
+		}, nil
+	})
+	store := &incrementStore{count: upstreamRequestsPerSecond + 1}
+	transport := &redisRateLimitedTransport{
+		base:  base,
+		store: store,
+		limit: upstreamRequestsPerSecond,
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	request := requestFor(t, "https://pkg.go.dev/v1/search?q=second").WithContext(ctx)
+	response, err := transport.RoundTrip(request)
+	if response != nil {
+		_ = response.Body.Close()
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RoundTrip error = %v, want context canceled", err)
+	}
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("base RoundTrip calls = %d, want 0", got)
+	}
+}
+
+func TestRedisRateLimitedTransportUsesSharedStore(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int64
+	base := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{},
+			Body:       io.NopCloser(bytes.NewReader(nil)),
+			Request:    req,
+		}, nil
+	})
+	store := &incrementStore{count: 1}
+	transport := &redisRateLimitedTransport{base: base, store: store, limit: upstreamRequestsPerSecond}
+
+	response, err := transport.RoundTrip(requestFor(t, "https://pkg.go.dev/v1/search?q=shared"))
+	if err != nil {
+		t.Fatalf("RoundTrip returned error: %v", err)
+	}
+	_ = response.Body.Close()
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("base RoundTrip calls = %d, want 1", got)
+	}
+	if !strings.HasPrefix(store.key, upstreamRateLimitKeyPrefix) {
+		t.Fatalf("Increment key = %q, want prefix %q", store.key, upstreamRateLimitKeyPrefix)
+	}
+	if store.ttl <= time.Second {
+		t.Fatalf("Increment TTL = %s, want more than one second", store.ttl)
+	}
+}
+
+func TestRedisRateLimitedTransportPropagatesStoreErrors(t *testing.T) {
+	t.Parallel()
+
+	storeErr := errors.New("redis unavailable")
+	store := &incrementStore{err: storeErr}
+	transport := &redisRateLimitedTransport{
+		store: store,
+		limit: upstreamRequestsPerSecond,
+	}
+
+	response, err := transport.RoundTrip(requestFor(t, "https://pkg.go.dev/v1/search?q=error"))
+	if response != nil {
+		_ = response.Body.Close()
+	}
+	if !errors.Is(err, storeErr) {
+		t.Fatalf("RoundTrip error = %v, want %v", err, storeErr)
+	}
+}
+
+func TestRedisRateLimitedTransportDoesNotUseLocalFallback(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int64
+	transport := &redisRateLimitedTransport{
+		base: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			calls.Add(1)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{},
+				Body:       io.NopCloser(bytes.NewReader(nil)),
+				Request:    req,
+			}, nil
+		}),
+		limit: upstreamRequestsPerSecond,
+	}
+
+	response, err := transport.RoundTrip(requestFor(t, "https://pkg.go.dev/v1/search?q=no-redis"))
+	if err != nil {
+		t.Fatalf("RoundTrip returned error: %v", err)
+	}
+	_ = response.Body.Close()
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("base RoundTrip calls = %d, want 1", got)
 	}
 }
 
@@ -205,6 +325,27 @@ type countingStore struct {
 	readyOnce  sync.Once
 }
 
+type incrementStore struct {
+	count int64
+	err   error
+	key   string
+	ttl   time.Duration
+}
+
+func (s *incrementStore) Get(context.Context, string) ([]byte, error) {
+	return nil, kv.ErrNotFound
+}
+
+func (s *incrementStore) Set(context.Context, string, []byte, time.Duration) error {
+	return nil
+}
+
+func (s *incrementStore) Increment(_ context.Context, key string, ttl time.Duration) (int64, error) {
+	s.key = key
+	s.ttl = ttl
+	return s.count, s.err
+}
+
 func newCountingStore(targetGets int64) *countingStore {
 	return &countingStore{
 		targetGets: targetGets,
@@ -245,6 +386,12 @@ type gatedRoundTripper struct {
 	body       []byte
 	err        error
 	release    chan struct{}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 func (rt *gatedRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {

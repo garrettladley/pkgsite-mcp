@@ -1,1 +1,3 @@
 List exported symbols for a package from pkg.go.dev. This is the preferred tool for current public API facts.
+
+`filter` must be a Go expression that returns a boolean. It supports `true`, `false`, and `nil`; `==` and `!=` on any value; `+`, `-`, `*`, `/`, and `%` on integers; `+` on strings; `<`, `<=`, `>`, and `>=` on strings and integers; and parenthesized expressions. The functions `contains(s, sub)`, `hasPrefix(s, pre)`, `hasSuffix(s, suf)`, and `matches(s, re)` are available. `matches` takes a regular expression; a bare regular expression is not a valid filter. JSON fields from each symbol are available as variables. Example: `kind == "Type"`. Pass the expression as plain text; the client percent-encodes query parameters.

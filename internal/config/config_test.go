@@ -21,7 +21,7 @@ func TestReadDefaults(t *testing.T) {
 	if got.Observability.FlushTimeout != 2*time.Second {
 		t.Fatalf("FlushTimeout = %s, want 2s", got.Observability.FlushTimeout)
 	}
-	if got.Pkgsite.BaseURL != "https://pkg.go.dev/v1beta" {
+	if got.Pkgsite.BaseURL != "https://pkg.go.dev/v1" {
 		t.Fatalf("BaseURL = %q, want default", got.Pkgsite.BaseURL)
 	}
 	if got.Pkgsite.HTTPTimeout != 10*time.Second {

@@ -1,7 +1,7 @@
 # pkgsite-mcp
 
 MCP tools for looking up current Go module and package information from the
-official `pkg.go.dev/v1beta` API.
+official `pkg.go.dev/v1` API.
 
 Use it when you want a coding agent to answer Go dependency questions with
 structured pkg.go.dev data instead of guessing from model memory, scraping HTML,
@@ -146,7 +146,7 @@ Health endpoint:
 http://localhost:8080/health
 ```
 
-Start optional Redis for local caching and rate limiting:
+Start Redis for local caching and distributed rate limiting:
 
 ```sh
 just up
@@ -179,7 +179,7 @@ http://localhost:8080/mcp
 ## Configuration
 
 ```text
-PKGSITE_BASE_URL=https://pkg.go.dev/v1beta
+PKGSITE_BASE_URL=https://pkg.go.dev/v1
 KV_REDIS_URL=redis://localhost:9736/0
 KV_REDIS_POOL_SIZE=4
 KV_REDIS_MIN_IDLE_CONNS=2
@@ -205,8 +205,9 @@ O11Y_ENABLE_LOGS=true
 O11Y_ENABLE_METRICS=true
 ```
 
-Redis is optional. Without `KV_REDIS_URL`, requests go directly to pkg.go.dev and
-IP rate limiting is disabled. When Redis is configured, it backs both pkg.go.dev
-response caching and fixed-window IP rate limiting for `/mcp`.
+Redis backs response caching, the distributed outbound pkg.go.dev 45-QPS limiter,
+and fixed-window IP rate limiting for `/mcp`. Without `KV_REDIS_URL`, caching and
+both Redis-backed limiters are disabled; requests use direct upstream access
+without a process-local fallback limiter.
 
 Sentry is optional. Without `SENTRY_DSN`, observability calls stay no-op.
