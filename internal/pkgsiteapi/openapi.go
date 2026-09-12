@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	DefaultOpenAPIURL    = "https://pkg.go.dev/v1beta/openapi.yaml"
+	DefaultOpenAPIURL    = "https://pkg.go.dev/v1/openapi.yaml"
 	DefaultOpenAPIOutput = "internal/pkgsiteapi/openapi.json"
 
 	maxOpenAPISpecBytes = 16 << 20

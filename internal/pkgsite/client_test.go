@@ -186,10 +186,9 @@ func TestClientSearchSuccessFromFakeUpstream(t *testing.T) {
 			"total": 1,
 			"items": []map[string]any{
 				{
-					"name":       "uuid",
-					"path":       "github.com/google/uuid",
-					"modulePath": "github.com/google/uuid",
-					"version":    "v1.6.0",
+					"packagePath": "github.com/google/uuid",
+					"modulePath":  "github.com/google/uuid",
+					"version":     "v1.6.0",
 				},
 			},
 		})
@@ -211,7 +210,7 @@ func TestClientSearchSuccessFromFakeUpstream(t *testing.T) {
 		"symbol": "",
 		"count":  1,
 	})
-	assertItemNames(t, got.Items, []string{"uuid"})
+	assertItemPackagePaths(t, got.Items, []string{"github.com/google/uuid"})
 	assertPagination(t, got, 1, 1, "")
 }
 
@@ -225,9 +224,9 @@ func TestClientSearchSingleResultSchedulesPackageWarm(t *testing.T) {
 		writeJSON(t, w, http.StatusOK, map[string]any{
 			"total": 1,
 			"items": []map[string]any{{
-				"path":       "github.com/google/uuid",
-				"modulePath": "github.com/google/uuid",
-				"version":    "v1.6.0",
+				"packagePath": "github.com/google/uuid",
+				"modulePath":  "github.com/google/uuid",
+				"version":     "v1.6.0",
 			}},
 		})
 	}, WithWarmer(warmer))
@@ -251,8 +250,8 @@ func TestClientSearchMultipleResultsDoesNotWarm(t *testing.T) {
 		writeJSON(t, w, http.StatusOK, map[string]any{
 			"total": 2,
 			"items": []map[string]any{
-				{"path": "example.com/one"},
-				{"path": "example.com/two"},
+				{"packagePath": "example.com/one"},
+				{"packagePath": "example.com/two"},
 			},
 		})
 	}, WithWarmer(warmer))
@@ -319,7 +318,7 @@ func TestClientUpstream4xxReturnsStructuredResultError(t *testing.T) {
 			name:   "module not found",
 			status: http.StatusNotFound,
 			body: map[string]any{
-				"code":    "not_found",
+				"code":    http.StatusNotFound,
 				"message": "module not found",
 			},
 			callFunc: func(t *testing.T, client *Client) (Result, error) {
@@ -331,7 +330,7 @@ func TestClientUpstream4xxReturnsStructuredResultError(t *testing.T) {
 			name:   "search bad request",
 			status: http.StatusBadRequest,
 			body: map[string]any{
-				"code":    "bad_request",
+				"code":    http.StatusBadRequest,
 				"message": "missing query",
 			},
 			callFunc: func(t *testing.T, client *Client) (Result, error) {
@@ -367,7 +366,7 @@ func TestClientUpstream4xxReturnsStructuredResultError(t *testing.T) {
 			if !json.Valid(got.Error.Body) {
 				t.Fatalf("Result.Error.Body is not valid JSON: %q", string(got.Error.Body))
 			}
-			for _, want := range []string{tt.body["code"].(string), tt.body["message"].(string)} {
+			for _, want := range []string{fmt.Sprint(tt.body["code"]), tt.body["message"].(string)} {
 				if !strings.Contains(got.Error.Message, want) {
 					t.Fatalf("message %q does not contain %q", got.Error.Message, want)
 				}
@@ -620,6 +619,22 @@ func assertItemNames(t testing.TB, items []map[string]any, want []string) {
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("item names = %#v, want %#v", got, want)
+	}
+}
+
+func assertItemPackagePaths(t testing.TB, items []map[string]any, want []string) {
+	t.Helper()
+
+	got := make([]string, 0, len(items))
+	for _, item := range items {
+		path, ok := item["packagePath"].(string)
+		if !ok {
+			t.Fatalf("item package path = %#v, want string", item["packagePath"])
+		}
+		got = append(got, path)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("item package paths = %#v, want %#v", got, want)
 	}
 }
 

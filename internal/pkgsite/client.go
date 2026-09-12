@@ -252,25 +252,107 @@ func resultError(statusCode int, status string, body []byte, resp *http.Response
 	return Result{Error: &APIError{StatusCode: statusCode, Status: status, Message: message, Body: raw}, UpstreamURL: requestURL(resp), FromCache: fromCache(resp)}
 }
 
-func paginatedItems(page *pkgsiteapi.PaginatedResponse) []map[string]any {
-	if page == nil || page.Items == nil {
+func paginatedItems(page any) []map[string]any {
+	switch page := page.(type) {
+	case *pkgsiteapi.PaginatedResponseModuleVersion:
+		if page == nil {
+			return nil
+		}
+		return objectItems(page.Items)
+	case *pkgsiteapi.PaginatedResponsePackageInfo:
+		if page == nil {
+			return nil
+		}
+		return objectItems(page.Items)
+	case *pkgsiteapi.PaginatedResponseSearchResult:
+		if page == nil {
+			return nil
+		}
+		return objectItems(page.Items)
+	case *pkgsiteapi.PaginatedResponseSymbol:
+		if page == nil {
+			return nil
+		}
+		return objectItems(page.Items)
+	case *pkgsiteapi.PaginatedResponseVulnerability:
+		if page == nil {
+			return nil
+		}
+		return objectItems(page.Items)
+	case *pkgsiteapi.PaginatedResponseString:
+		if page == nil || page.Items == nil {
+			return nil
+		}
+		items := make([]map[string]any, 0, len(*page.Items))
+		for _, item := range *page.Items {
+			items = append(items, map[string]any{"path": item})
+		}
+		return items
+	default:
 		return nil
 	}
-	return *page.Items
 }
 
-func pagination(page *pkgsiteapi.PaginatedResponse, count int) map[string]any {
+func pagination(page any, count int) map[string]any {
 	total := count
 	next := ""
-	if page != nil {
-		if page.Total != nil {
-			total = *page.Total
-		}
-		if page.NextPageToken != nil {
-			next = *page.NextPageToken
-		}
+	pageTotal, pageNext := pageMetadata(page)
+	if pageTotal != nil {
+		total = *pageTotal
+	}
+	if pageNext != nil {
+		next = *pageNext
 	}
 	return map[string]any{"total": total, "displayedItems": count, "startAt": 0, "nextStartAt": nil, "upstreamNextPageToken": next}
+}
+
+func pageMetadata(page any) (total *int, next *string) {
+	switch page := page.(type) {
+	case *pkgsiteapi.PaginatedResponseModuleVersion:
+		if page != nil {
+			return page.Total, page.NextPageToken
+		}
+	case *pkgsiteapi.PaginatedResponsePackageInfo:
+		if page != nil {
+			return page.Total, page.NextPageToken
+		}
+	case *pkgsiteapi.PaginatedResponseSearchResult:
+		if page != nil {
+			return page.Total, page.NextPageToken
+		}
+	case *pkgsiteapi.PaginatedResponseSymbol:
+		if page != nil {
+			return page.Total, page.NextPageToken
+		}
+	case *pkgsiteapi.PaginatedResponseVulnerability:
+		if page != nil {
+			return page.Total, page.NextPageToken
+		}
+	case *pkgsiteapi.PaginatedResponseString:
+		if page != nil {
+			return page.Total, page.NextPageToken
+		}
+	}
+	return nil, nil
+}
+
+func objectItems[T any](items *[]T) []map[string]any {
+	if items == nil {
+		return nil
+	}
+	result := make([]map[string]any, 0, len(*items))
+	for _, item := range *items {
+		value := map[string]any{}
+		data, err := json.Marshal(item)
+		if err != nil {
+			continue
+		}
+		if err := json.Unmarshal(data, &value); err != nil {
+			continue
+		}
+		result = append(result, value)
+	}
+	return result
 }
 
 func optionalString(v string) *string {
