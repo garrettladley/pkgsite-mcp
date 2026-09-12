@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -133,7 +134,7 @@ func TestRateLimitContextOutcome(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, ok := rateLimitContextOutcome(tt.err)
+			got, ok := rateLimitContextOutcome(context.Background(), tt.err)
 			if ok != tt.ok {
 				t.Fatalf("ok = %t, want %t", ok, tt.ok)
 			}
@@ -141,6 +142,63 @@ func TestRateLimitContextOutcome(t *testing.T) {
 				t.Fatalf("outcome = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRateLimitDoesNotLogCanceledRequestWhenRedisReturnsSocketTimeout(t *testing.T) {
+	t.Parallel()
+
+	var errorLogs atomic.Int64
+	logger := slog.New(countingErrorHandler{count: &errorLogs})
+	store := incrementFunc(func(context.Context, string, time.Duration) (int64, error) {
+		// os.ErrDeadlineExceeded is the public identity of the runtime's
+		// poll.DeadlineExceededError, which formats as "i/o timeout".
+		return 0, os.ErrDeadlineExceeded
+	})
+	handler := RateLimit(store, config.RateLimit{Enabled: true, Requests: 2, Window: time.Minute}, logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://example.test/mcp", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.RemoteAddr = "203.0.113.10:1234"
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if got := errorLogs.Load(); got != 0 {
+		t.Fatalf("error logs = %d, want 0", got)
+	}
+}
+
+func TestRateLimitLogsRedisSocketTimeoutAtWarnAndFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	var warningLogs atomic.Int64
+	var errorLogs atomic.Int64
+	logger := slog.New(recordingLogHandler{warnings: &warningLogs, errors: &errorLogs})
+	store := incrementFunc(func(context.Context, string, time.Duration) (int64, error) {
+		return 0, os.ErrDeadlineExceeded
+	})
+	handler := RateLimit(store, config.RateLimit{Enabled: true, Requests: 2, Window: time.Minute}, logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, requestWithIP(t, "203.0.113.10:1234"))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+	if got := warningLogs.Load(); got != 1 {
+		t.Fatalf("warning logs = %d, want 1", got)
+	}
+	if got := errorLogs.Load(); got != 0 {
+		t.Fatalf("error logs = %d, want 0", got)
 	}
 }
 
@@ -203,5 +261,34 @@ func (h countingErrorHandler) WithAttrs([]slog.Attr) slog.Handler {
 }
 
 func (h countingErrorHandler) WithGroup(string) slog.Handler {
+	return h
+}
+
+type recordingLogHandler struct {
+	warnings *atomic.Int64
+	errors   *atomic.Int64
+}
+
+var _ slog.Handler = recordingLogHandler{}
+
+func (h recordingLogHandler) Enabled(_ context.Context, level slog.Level) bool {
+	return level >= slog.LevelWarn
+}
+
+func (h recordingLogHandler) Handle(_ context.Context, record slog.Record) error {
+	switch {
+	case record.Level >= slog.LevelError:
+		h.errors.Add(1)
+	case record.Level >= slog.LevelWarn:
+		h.warnings.Add(1)
+	}
+	return nil
+}
+
+func (h recordingLogHandler) WithAttrs([]slog.Attr) slog.Handler {
+	return h
+}
+
+func (h recordingLogHandler) WithGroup(string) slog.Handler {
 	return h
 }

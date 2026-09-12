@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -41,12 +42,12 @@ func RateLimit(store kv.Store, cfg config.RateLimit, logger *slog.Logger) Middle
 			key := rateLimitKey(ip, cfg.Window, now)
 			count, err := store.Increment(r.Context(), key, cfg.Window+time.Second)
 			if err != nil {
-				if outcome, ok := rateLimitContextOutcome(err); ok {
+				if outcome, ok := rateLimitContextOutcome(r.Context(), err); ok {
 					trace.SpanFromContext(r.Context()).SetAttributes(observability.RateLimitAttrs{Outcome: outcome, Limit: cfg.Requests, Window: cfg.Window}.Attributes()...)
 					return
 				}
 				trace.SpanFromContext(r.Context()).SetAttributes(observability.RateLimitAttrs{Outcome: observability.RateLimitOutcomeStoreError, Limit: cfg.Requests, Window: cfg.Window}.Attributes()...)
-				logger.ErrorContext(r.Context(), "rate limit check failed", slog.Any("error", err), slog.String("client_ip", ip))
+				logger.LogAttrs(r.Context(), rateLimitStoreErrorLevel(err), "rate limit check failed", slog.Any("error", err), slog.String("client_ip", ip))
 				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 				return
 			}
@@ -66,7 +67,14 @@ func RateLimit(store kv.Store, cfg config.RateLimit, logger *slog.Logger) Middle
 	}
 }
 
-func rateLimitContextOutcome(err error) (observability.RateLimitOutcome, bool) {
+func rateLimitContextOutcome(ctx context.Context, err error) (observability.RateLimitOutcome, bool) {
+	switch ctx.Err() {
+	case context.Canceled:
+		return observability.RateLimitOutcomeCanceled, true
+	case context.DeadlineExceeded:
+		return observability.RateLimitOutcomeDeadline, true
+	}
+
 	switch {
 	case errors.Is(err, context.Canceled):
 		return observability.RateLimitOutcomeCanceled, true
@@ -75,6 +83,13 @@ func rateLimitContextOutcome(err error) (observability.RateLimitOutcome, bool) {
 	default:
 		return "", false
 	}
+}
+
+func rateLimitStoreErrorLevel(err error) slog.Level {
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return slog.LevelWarn
+	}
+	return slog.LevelError
 }
 
 func rateLimitKey(ip string, window time.Duration, now time.Time) string {
