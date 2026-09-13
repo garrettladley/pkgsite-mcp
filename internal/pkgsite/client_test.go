@@ -169,6 +169,37 @@ func TestClientPackageSchedulesSymbolsWarm(t *testing.T) {
 	}})
 }
 
+func TestClientPackageSummaryIncludesV1IdentityFields(t *testing.T) {
+	t.Parallel()
+
+	client, _ := newFakeUpstreamClient(t, func(t *testing.T, w http.ResponseWriter, _ *http.Request) {
+		t.Helper()
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"path":              "example.com/pkg",
+			"name":              "pkg",
+			"synopsis":          "Package pkg does useful things.",
+			"isRedistributable": true,
+			"modulePath":        "example.com",
+			"version":           "v1.2.3",
+		})
+	})
+
+	got, err := client.Package(t.Context(), PackageInput{PackagePath: "example.com/pkg"})
+	if err != nil {
+		t.Fatalf("Package returned error: %v", err)
+	}
+	for key, want := range map[string]any{
+		"path":              "example.com/pkg",
+		"name":              "pkg",
+		"synopsis":          "Package pkg does useful things.",
+		"isRedistributable": true,
+	} {
+		if got.Summary[key] != want {
+			t.Fatalf("summary[%q] = %#v, want %#v", key, got.Summary[key], want)
+		}
+	}
+}
+
 func TestClientSearchSuccessFromFakeUpstream(t *testing.T) {
 	t.Parallel()
 
@@ -366,15 +397,54 @@ func TestClientUpstream4xxReturnsStructuredResultError(t *testing.T) {
 			if !json.Valid(got.Error.Body) {
 				t.Fatalf("Result.Error.Body is not valid JSON: %q", string(got.Error.Body))
 			}
-			for _, want := range []string{fmt.Sprint(tt.body["code"]), tt.body["message"].(string)} {
-				if !strings.Contains(got.Error.Message, want) {
-					t.Fatalf("message %q does not contain %q", got.Error.Message, want)
-				}
+			if got.Error.Message != tt.body["message"].(string) {
+				t.Fatalf("message = %q, want %q", got.Error.Message, tt.body["message"])
+			}
+			if got.Error.Code == nil || *got.Error.Code != tt.body["code"].(int) {
+				t.Fatalf("code = %v, want %v", got.Error.Code, tt.body["code"])
 			}
 			if !strings.HasPrefix(got.UpstreamURL, upstreamURL+"/") {
 				t.Fatalf("upstream URL = %q, want prefix %q", got.UpstreamURL, upstreamURL+"/")
 			}
 		})
+	}
+}
+
+func TestClientAmbiguousPackagePreservesCandidatesAndFixes(t *testing.T) {
+	t.Parallel()
+
+	client, _ := newFakeUpstreamClient(t, func(t *testing.T, w http.ResponseWriter, _ *http.Request) {
+		t.Helper()
+		w.Header().Set("Retry-After", "3")
+		writeJSON(t, w, http.StatusBadRequest, map[string]any{
+			"code":    400,
+			"message": "package path is ambiguous",
+			"fixes":   []string{`retry the call with the containing module: "example.com/one"`},
+			"candidates": []map[string]string{
+				{"modulePath": "example.com/one", "packagePath": "example.com/one/pkg"},
+			},
+		})
+	})
+
+	got, err := client.Package(t.Context(), PackageInput{PackagePath: "example.com/pkg"})
+	if err != nil {
+		t.Fatalf("Package returned error: %v", err)
+	}
+	if got.Error == nil {
+		t.Fatal("Result.Error is nil")
+	}
+	if got.Error.Code == nil || *got.Error.Code != http.StatusBadRequest {
+		t.Fatalf("code = %v, want 400", got.Error.Code)
+	}
+	if !reflect.DeepEqual(got.Error.Fixes, []string{`retry the call with the containing module: "example.com/one"`}) {
+		t.Fatalf("fixes = %#v", got.Error.Fixes)
+	}
+	wantCandidates := []Candidate{{ModulePath: "example.com/one", PackagePath: "example.com/one/pkg"}}
+	if !reflect.DeepEqual(got.Error.Candidates, wantCandidates) {
+		t.Fatalf("candidates = %#v, want %#v", got.Error.Candidates, wantCandidates)
+	}
+	if got.Error.RetryAfter != "3" {
+		t.Fatalf("retry after = %q, want 3", got.Error.RetryAfter)
 	}
 }
 

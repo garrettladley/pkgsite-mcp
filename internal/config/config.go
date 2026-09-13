@@ -104,7 +104,7 @@ func read(getenv func(string) string) (Config, error) {
 			EnableMetrics:    p.boolean("O11Y_ENABLE_METRICS", true),
 		},
 		Pkgsite: Pkgsite{
-			BaseURL:       p.str("PKGSITE_BASE_URL", "https://pkg.go.dev/v1beta"),
+			BaseURL:       p.str("PKGSITE_BASE_URL", "https://pkg.go.dev/v1"),
 			HTTPTimeout:   p.duration("PKGSITE_HTTP_TIMEOUT", 10*time.Second),
 			CacheDisabled: p.boolean("PKGSITE_CACHE_DISABLED", false),
 		},

@@ -5,8 +5,9 @@ import "github.com/garrettladley/pkgsite-mcp/internal/pkgsite/model"
 const DefaultBaseURL = model.DefaultBaseURL
 
 type (
-	APIError = model.APIError
-	Result   = model.Result
+	APIError  = model.APIError
+	Candidate = model.Candidate
+	Result    = model.Result
 )
 
 type (

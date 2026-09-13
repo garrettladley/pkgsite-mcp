@@ -56,6 +56,26 @@ func TestBuildExplainPayloadSummarizesSubResults(t *testing.T) {
 	}
 }
 
+func TestBuildExplainPayloadExposesUpstreamMetadata(t *testing.T) {
+	t.Parallel()
+
+	payload := buildExplainPayload(pkgsite.ExplainInput{Path: "example.com/module/pkg"}, explainParts{
+		Module: explainSubResultFromResult(pkgsite.Result{Summary: map[string]any{
+			"kind": "module", "path": "example.com/module", "version": "v1.2.3", "repoUrl": "https://example.com/module", "hasGoMod": true, "isRedistributable": true,
+		}}, nil),
+		Package: explainSubResultFromResult(pkgsite.Result{Summary: map[string]any{
+			"kind": "package", "path": "example.com/module/pkg", "modulePath": "example.com/module", "version": "v1.2.3", "name": "pkg", "synopsis": "Package synopsis.", "goos": "linux", "goarch": "amd64", "importCount": 3, "isLatest": true, "isRedistributable": true,
+		}}, nil),
+	})
+
+	if payload.Summary.RepoURL != "https://example.com/module" || !payload.Summary.HasGoMod || !payload.Summary.IsRedistributable {
+		t.Fatalf("module metadata missing from summary: %#v", payload.Summary)
+	}
+	if payload.Summary.Name != "pkg" || payload.Summary.Synopsis != "Package synopsis." || payload.Summary.Goos != "linux" || payload.Summary.Goarch != "amd64" || payload.Summary.ImportCount != 3 {
+		t.Fatalf("package metadata missing from summary: %#v", payload.Summary)
+	}
+}
+
 func TestExplainSubResultFromResultPreservesCallErrorsAndAPIResults(t *testing.T) {
 	t.Parallel()
 

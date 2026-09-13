@@ -15,6 +15,8 @@ func TestEndpointFromURL(t *testing.T) {
 		raw  string
 		want PkgsiteEndpoint
 	}{
+		{raw: "https://pkg.go.dev/v1/search?q=uuid", want: PkgsiteEndpointSearch},
+		{raw: "https://pkg.go.dev/v1/module/golang.org%2Fx%2Foauth2", want: PkgsiteEndpointModule},
 		{raw: "https://pkg.go.dev/v1beta/search?q=uuid", want: PkgsiteEndpointSearch},
 		{raw: "https://pkg.go.dev/v1beta/module/golang.org%2Fx%2Foauth2", want: PkgsiteEndpointModule},
 		{raw: "https://pkg.go.dev/v1beta/package/golang.org%2Fx%2Foauth2", want: PkgsiteEndpointPackage},

@@ -28,7 +28,15 @@ type explainSummary struct {
 	ModulePath         string            `json:"modulePath,omitempty"`
 	PackagePath        string            `json:"packagePath,omitempty"`
 	ResolvedVersion    string            `json:"resolvedVersion,omitempty"`
+	RepoURL            string            `json:"repoUrl,omitempty"`
+	Name               string            `json:"name,omitempty"`
+	Synopsis           string            `json:"synopsis,omitempty"`
+	Goos               string            `json:"goos,omitempty"`
+	Goarch             string            `json:"goarch,omitempty"`
+	ImportCount        int               `json:"importCount"`
 	IsLatest           bool              `json:"isLatest"`
+	HasGoMod           bool              `json:"hasGoMod"`
+	IsRedistributable  bool              `json:"isRedistributable"`
 	IsStandardLibrary  bool              `json:"isStandardLibrary"`
 	HasVulnerabilities bool              `json:"hasVulnerabilities"`
 	Counts             map[string]int    `json:"counts"`
@@ -182,7 +190,10 @@ func applyModuleSummary(summary *explainSummary, data map[string]any) {
 	}
 	setString(&summary.ModulePath, data["path"])
 	setString(&summary.ResolvedVersion, data["version"])
+	setString(&summary.RepoURL, data["repoUrl"])
 	setBool(&summary.IsLatest, data["isLatest"])
+	setBool(&summary.HasGoMod, data["hasGoMod"])
+	setBool(&summary.IsRedistributable, data["isRedistributable"])
 	setBool(&summary.IsStandardLibrary, data["isStandardLibrary"])
 }
 
@@ -193,7 +204,13 @@ func applyPackageSummary(summary *explainSummary, data map[string]any) {
 	setString(&summary.PackagePath, data["path"])
 	setString(&summary.ModulePath, data["modulePath"])
 	setString(&summary.ResolvedVersion, data["version"])
+	setString(&summary.Name, data["name"])
+	setString(&summary.Synopsis, data["synopsis"])
+	setString(&summary.Goos, data["goos"])
+	setString(&summary.Goarch, data["goarch"])
+	setInt(&summary.ImportCount, data["importCount"])
 	setBool(&summary.IsLatest, data["isLatest"])
+	setBool(&summary.IsRedistributable, data["isRedistributable"])
 	setBool(&summary.IsStandardLibrary, data["isStandardLibrary"])
 }
 
@@ -260,5 +277,11 @@ func setString(target *string, value any) {
 func setBool(target *bool, value any) {
 	if b, ok := value.(bool); ok {
 		*target = b
+	}
+}
+
+func setInt(target *int, value any) {
+	if n, ok := value.(int); ok {
+		*target = n
 	}
 }
