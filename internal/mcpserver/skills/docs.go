@@ -41,12 +41,6 @@ type Skill struct {
 	resource    Resource
 }
 
-const (
-	FieldName        = "name"
-	FieldDescription = "description"
-	FieldRelated     = "related"
-)
-
 type Resource struct {
 	URI    string `json:"uri"`
 	Digest string `json:"digest"`

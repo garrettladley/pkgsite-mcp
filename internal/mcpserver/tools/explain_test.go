@@ -1,7 +1,9 @@
 package tools
 
 import (
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/garrettladley/pkgsite-mcp/internal/pkgsite"
@@ -10,7 +12,7 @@ import (
 func TestBuildExplainPayloadSummarizesSubResults(t *testing.T) {
 	t.Parallel()
 
-	payload := buildExplainPayload(pkgsite.ExplainInput{Path: "golang.org/x/oauth2", Version: "v1.2.3"}, explainParts{
+	summary := buildExplainSummary(pkgsite.ExplainInput{Path: "golang.org/x/oauth2", Version: "v1.2.3"}, explainParts{
 		Module: explainSubResultFromResult(pkgsite.Result{Summary: map[string]any{
 			"kind": "module", "path": "golang.org/x/oauth2", "version": "v1.2.3", "isLatest": true,
 		}, Raw: map[string]any{"module": true}}, nil),
@@ -33,33 +35,30 @@ func TestBuildExplainPayloadSummarizesSubResults(t *testing.T) {
 		Vulns: explainSubResultFromResult(pkgsite.Result{Items: []map[string]any{{"id": "GO-2026-0001"}}}, nil),
 	})
 
-	if payload.Summary.Kind != "module" {
-		t.Fatalf("Kind = %q, want module", payload.Summary.Kind)
+	if summary.Kind != "module" {
+		t.Fatalf("Kind = %q, want module", summary.Kind)
 	}
-	if payload.Summary.ModulePath != "golang.org/x/oauth2" {
-		t.Fatalf("ModulePath = %q", payload.Summary.ModulePath)
+	if summary.ModulePath != "golang.org/x/oauth2" {
+		t.Fatalf("ModulePath = %q", summary.ModulePath)
 	}
-	if payload.Summary.ResolvedVersion != "v1.2.3" {
-		t.Fatalf("ResolvedVersion = %q", payload.Summary.ResolvedVersion)
+	if summary.ResolvedVersion != "v1.2.3" {
+		t.Fatalf("ResolvedVersion = %q", summary.ResolvedVersion)
 	}
-	if payload.Summary.Counts["packages"] != 2 || payload.Summary.Counts["symbols"] != 3 || payload.Summary.Counts["vulns"] != 1 {
-		t.Fatalf("Counts = %#v", payload.Summary.Counts)
+	if summary.Counts["packages"] != 2 || summary.Counts["symbols"] != 3 || summary.Counts["vulns"] != 1 {
+		t.Fatalf("Counts = %#v", summary.Counts)
 	}
-	if got := payload.Summary.KeySymbols; len(got) != 2 || got[0] != "Config" || got[1] != "Token" {
+	if got := summary.KeySymbols; len(got) != 2 || got[0] != "Config" || got[1] != "Token" {
 		t.Fatalf("KeySymbols = %#v", got)
 	}
-	if !payload.Summary.HasVulnerabilities {
+	if !summary.HasVulnerabilities {
 		t.Fatal("HasVulnerabilities = false, want true")
-	}
-	if payload.SubResults.Package.Status != explainStatusNotFound {
-		t.Fatalf("package status = %q", payload.SubResults.Package.Status)
 	}
 }
 
 func TestBuildExplainPayloadExposesUpstreamMetadata(t *testing.T) {
 	t.Parallel()
 
-	payload := buildExplainPayload(pkgsite.ExplainInput{Path: "example.com/module/pkg"}, explainParts{
+	summary := buildExplainSummary(pkgsite.ExplainInput{Path: "example.com/module/pkg"}, explainParts{
 		Module: explainSubResultFromResult(pkgsite.Result{Summary: map[string]any{
 			"kind": "module", "path": "example.com/module", "version": "v1.2.3", "repoUrl": "https://example.com/module", "hasGoMod": true, "isRedistributable": true,
 		}}, nil),
@@ -68,11 +67,11 @@ func TestBuildExplainPayloadExposesUpstreamMetadata(t *testing.T) {
 		}}, nil),
 	})
 
-	if payload.Summary.RepoURL != "https://example.com/module" || !payload.Summary.HasGoMod || !payload.Summary.IsRedistributable {
-		t.Fatalf("module metadata missing from summary: %#v", payload.Summary)
+	if summary.RepoURL != "https://example.com/module" || !summary.HasGoMod || !summary.IsRedistributable {
+		t.Fatalf("module metadata missing from summary: %#v", summary)
 	}
-	if payload.Summary.Name != "pkg" || payload.Summary.Synopsis != "Package synopsis." || payload.Summary.Goos != "linux" || payload.Summary.Goarch != "amd64" || payload.Summary.ImportCount != 3 {
-		t.Fatalf("package metadata missing from summary: %#v", payload.Summary)
+	if summary.Name != "pkg" || summary.Synopsis != "Package synopsis." || summary.Goos != "linux" || summary.Goarch != "amd64" {
+		t.Fatalf("package metadata missing from summary: %#v", summary)
 	}
 }
 
@@ -93,32 +92,30 @@ func TestExplainSubResultFromResultPreservesCallErrorsAndAPIResults(t *testing.T
 	}
 }
 
-func TestExplainSubResultDropsListRawPayloads(t *testing.T) {
+func TestExplainLookupsHaveTypedDataAndActionableErrors(t *testing.T) {
 	t.Parallel()
-
-	list := explainSubResultFromResult(pkgsite.Result{
-		Items:      []map[string]any{{"name": "Clone"}},
-		Pagination: map[string]any{"total": 1},
-		Raw:        map[string]any{"items": []any{map[string]any{"name": "Clone"}}},
-	}, nil)
-	if list.Result.Raw != nil {
-		t.Fatalf("list raw = %#v, want nil", list.Result.Raw)
+	parts := explainParts{
+		Module:   explainSubResultFromResult(pkgsite.Result{Error: &pkgsite.APIError{StatusCode: 400, Message: "use std", Fixes: []string{"module_path=std"}}}, nil),
+		Package:  explainSubResultFromResult(pkgsite.Result{Raw: map[string]any{"path": "net/http", "modulePath": "std"}}, nil),
+		Packages: explainSubResultSkipped("package lookup"),
+		Symbols:  explainSubResultFromResult(pkgsite.Result{Items: []map[string]any{{"name": "Client", "kind": "Type"}}}, nil),
+		Vulns:    explainSubResultFromResult(pkgsite.Result{}, nil),
 	}
-
-	emptyList := explainSubResultFromResult(pkgsite.Result{
-		Pagination: map[string]any{"total": 0},
-		Raw:        map[string]any{"total": 0},
-	}, nil)
-	if emptyList.Result.Raw != nil {
-		t.Fatalf("empty list raw = %#v, want nil", emptyList.Result.Raw)
+	payload, err := buildExplainPayload(t.Context(), pkgsite.ExplainInput{Path: "net/http"}, parts)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	single := explainSubResultFromResult(pkgsite.Result{
-		Summary: map[string]any{"kind": "package"},
-		Raw:     map[string]any{"path": "slices"},
-	}, nil)
-	if single.Result.Raw == nil {
-		t.Fatal("single-object raw = nil, want preserved")
+	if payload.Lookups.Module.Data != nil || payload.Lookups.Module.Error == nil || len(payload.Lookups.Module.Error.Fixes) != 1 {
+		t.Fatalf("module lookup = %+v", payload.Lookups.Module)
+	}
+	if payload.Lookups.Package.Data == nil || *payload.Lookups.Package.Data.Path != "net/http" {
+		t.Fatalf("package lookup = %+v", payload.Lookups.Package)
+	}
+	if payload.Lookups.Packages.Data != nil || payload.Lookups.Packages.Reason == "" {
+		t.Fatalf("packages lookup = %+v", payload.Lookups.Packages)
+	}
+	if payload.Lookups.Symbols.Data == nil || len(payload.Lookups.Symbols.Data.Items) != 1 {
+		t.Fatalf("symbols lookup = %+v", payload.Lookups.Symbols)
 	}
 }
 
@@ -143,5 +140,49 @@ func TestLooksModuleLike(t *testing.T) {
 				t.Fatalf("looksModuleLike(%q) = %t, want %t", tt.path, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestExplainBudgetsCombinedResponse(t *testing.T) {
+	t.Parallel()
+	items := []map[string]any{
+		{"name": "Client", "synopsis": strings.Repeat("a", 500)},
+		{"name": "Client.Do", "synopsis": strings.Repeat("b", 500)},
+		{"name": "Client.Get", "synopsis": strings.Repeat("c", 500)},
+	}
+	parts := explainParts{
+		Module:   explainSubResultSkipped("package path"),
+		Package:  explainSubResultFromResult(pkgsite.Result{Raw: map[string]any{"path": "net/http", "modulePath": "std"}}, nil),
+		Packages: explainSubResultSkipped("package path"),
+		Symbols:  explainSubResultFromResult(pkgsite.Result{Items: items, Pagination: map[string]any{"total": 406, "upstreamNextPageToken": "next"}}, nil),
+		Vulns:    explainSubResultFromResult(pkgsite.Result{}, nil),
+	}
+	full, err := buildExplainPayload(t.Context(), pkgsite.ExplainInput{Path: "net/http"}, parts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Remove roughly one item from the overall budget, including all lookup overhead.
+	budget := (len(data) - 400) / 4
+	output, err := buildExplainPayload(t.Context(), pkgsite.ExplainInput{Path: "net/http", MaxTokens: budget}, parts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err = json.Marshal(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) > budget*4 {
+		t.Fatalf("explain exceeds budget: %d > %d", len(data), budget*4)
+	}
+	symbols := output.Lookups.Symbols.Data
+	if len(symbols.Items) != 2 || symbols.Pagination.NextStartAt == nil || *symbols.Pagination.NextStartAt != 2 || *symbols.Pagination.Total != 406 {
+		t.Fatalf("symbols = %+v", symbols)
+	}
+	if _, err := buildExplainPayload(t.Context(), pkgsite.ExplainInput{Path: "net/http", MaxTokens: 1}, parts); err == nil {
+		t.Fatal("tiny explain budget should report an error")
 	}
 }

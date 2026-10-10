@@ -1,183 +1,88 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"maps"
-	"reflect"
-	"sort"
-	"strings"
 
+	"github.com/garrettladley/pkgsite-mcp/internal/observability"
 	"github.com/garrettladley/pkgsite-mcp/internal/pkgsite"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const defaultMaxTokens = 10_000
-
-type envelopeOptions struct {
-	Source      string
-	UpstreamURL string
-	ToolName    string
-	NextArgs    map[string]any
-}
 
 func textResult(text string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}
 }
 
-func singleEnvelope(data any, opts envelopeOptions) string {
-	return envelope(data, 1, 1, 0, 1, opts, false)
-}
-
-func paginatedEnvelope(result pkgsite.Result, page pkgsite.PageInput, opts envelopeOptions) string {
-	if page.StartAt < 0 {
-		page.StartAt = 0
-	}
-	if page.MaxTokens <= 0 {
-		page.MaxTokens = defaultMaxTokens
-	}
-	if len(result.Items) == 0 && result.Pagination == nil {
-		return singleEnvelope(result, opts)
-	}
-
-	total := len(result.Items)
-	displayed := takeMaps(result.Items, page.StartAt, total-page.StartAt)
-	if page.StartAt >= total {
-		displayed = nil
-	}
-	maxChars := page.MaxTokens * 4
-	next := page.StartAt + len(displayed)
-	display := result
-	display.Items = displayed
-	display.Raw = nil
-	display.Pagination = mergePagination(display.Pagination, total, len(displayed), page.StartAt, next)
-	for len(displayed) > 0 && len(envelope(display, total, len(displayed), page.StartAt, next, opts, next < total)) > maxChars {
-		displayed = displayed[:len(displayed)-1]
-		next = page.StartAt + len(displayed)
-		display.Items = displayed
-		display.Pagination = mergePagination(display.Pagination, total, len(displayed), page.StartAt, next)
-	}
-	return envelope(display, total, len(displayed), page.StartAt, next, opts, next < total)
-}
-
-func sliceEnvelope(items any, page pkgsite.PageInput, opts envelopeOptions) string {
-	if page.StartAt < 0 {
-		page.StartAt = 0
-	}
-	if page.MaxTokens <= 0 {
-		page.MaxTokens = defaultMaxTokens
-	}
-	total := sliceLen(items)
-	displayed := takeSlice(items, page.StartAt, max(0, total-page.StartAt))
-	displayedCount := sliceLen(displayed)
-	next := page.StartAt + displayedCount
-	maxChars := page.MaxTokens * 4
-	for displayedCount > 0 && len(envelope(displayed, total, displayedCount, page.StartAt, next, opts, next < total)) > maxChars {
-		displayedCount--
-		displayed = takeSlice(items, page.StartAt, displayedCount)
-		next = page.StartAt + displayedCount
-	}
-	return envelope(displayed, total, displayedCount, page.StartAt, next, opts, next < total)
-}
-
-func envelope(data any, total, displayed, startAt, next int, opts envelopeOptions, truncated bool) string {
-	var b strings.Builder
-	b.WriteString("<METADATA>\n")
-	fmt.Fprintf(&b, "  <is_truncated>%t</is_truncated>\n", truncated)
-	if truncated {
-		fmt.Fprintf(&b, "  <truncation_message>Response truncated. Call again with start_at=%d to get the next batch, and/or increase max_tokens.</truncation_message>\n", next)
-	}
-	fmt.Fprintf(&b, "  <displayed_items>%d</displayed_items>\n", displayed)
-	fmt.Fprintf(&b, "  <count>%d</count>\n", total)
-	fmt.Fprintf(&b, "  <start_at>%d</start_at>\n", startAt)
-	if truncated {
-		fmt.Fprintf(&b, "  <next_start_at>%d</next_start_at>\n", next)
-		if opts.ToolName != "" {
-			fmt.Fprintf(&b, "  <next_call>%s</next_call>\n", formatNextCall(opts.ToolName, opts.NextArgs, next))
-		}
-	}
-	if opts.Source != "" {
-		fmt.Fprintf(&b, "  <source>%s</source>\n", opts.Source)
-	}
-	if opts.UpstreamURL != "" {
-		fmt.Fprintf(&b, "  <upstream_url>%s</upstream_url>\n", opts.UpstreamURL)
-	}
-	b.WriteString("</METADATA>\n")
-	b.WriteString("<JSON_DATA>\n")
-	b.WriteString(toJSON(data))
-	b.WriteString("\n</JSON_DATA>")
-	return b.String()
-}
-
-func toJSON(v any) string {
-	data, err := json.MarshalIndent(v, "", "  ")
+func decodeOutput[T any](value any) (T, error) {
+	var output T
+	data, err := json.Marshal(value)
 	if err != nil {
-		return fmt.Sprintf(`{"error":%q}`, err.Error())
+		return output, fmt.Errorf("encode pkgsite result: %w", err)
 	}
-	return string(data)
+	if err := json.Unmarshal(data, &output); err != nil {
+		return output, fmt.Errorf("decode pkgsite result: %w", err)
+	}
+	return output, nil
 }
 
-func mergePagination(base map[string]any, total, displayed, startAt, next int) map[string]any {
-	out := make(map[string]any, len(base)+4)
-	maps.Copy(out, base)
-	out["total"] = total
-	out["displayedItems"] = displayed
-	out["startAt"] = startAt
-	if next < total {
-		out["nextStartAt"] = next
-	} else {
-		out["nextStartAt"] = nil
-	}
-	return out
-}
-
-func formatNextCall(toolName string, args map[string]any, nextStartAt int) string {
-	copied := make(map[string]any, len(args)+1)
-	for key, value := range args {
-		if value != "" && value != nil {
-			copied[key] = value
-		}
-	}
-	copied["start_at"] = nextStartAt
-	keys := make([]string, 0, len(copied))
-	for key := range copied {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, key := range keys {
-		parts = append(parts, fmt.Sprintf("%s=%v", key, copied[key]))
-	}
-	return fmt.Sprintf("%s(%s)", toolName, strings.Join(parts, ", "))
-}
-
-func takeMaps(items []map[string]any, start, count int) []map[string]any {
-	if start < 0 {
-		start = 0
-	}
-	if start >= len(items) || count <= 0 {
+// paginate budgets the complete JSON payload, including lookup context and source.
+// The SDK serializes this same output into structuredContent and its text fallback.
+func paginate[T any](ctx context.Context, result pkgsite.Result, page pkgsite.PageInput, output any, list *listOutput[T]) error {
+	if result.Error != nil {
+		list.Items = []T{}
 		return nil
 	}
-	end := min(start+count, len(items))
-	return items[start:end]
-}
-
-func sliceLen(items any) int {
-	v := reflect.ValueOf(items)
-	if v.Kind() != reflect.Slice {
-		return 1
+	items, err := decodeOutput[[]T](result.Items)
+	if err != nil {
+		return err
 	}
-	return v.Len()
-}
-
-func takeSlice(items any, start, count int) any {
-	v := reflect.ValueOf(items)
-	if v.Kind() != reflect.Slice {
-		return items
+	start := max(0, page.StartAt)
+	list.Items = items[min(start, len(items)):]
+	if list.Items == nil {
+		list.Items = []T{}
 	}
-	if start > v.Len() {
-		start = v.Len()
+	list.Pagination = &paginationOutput{
+		FetchedItems: len(items), StartAt: start,
+		UpstreamNextPageToken: summaryString(result.Pagination, "upstreamNextPageToken"),
 	}
-	end := min(start+count, v.Len())
-	return v.Slice(start, end).Interface()
+	if total, ok := result.Pagination["total"].(int); ok {
+		list.Pagination.Total = &total
+	}
+	maxTokens := page.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = defaultMaxTokens
+	}
+	for {
+		list.Pagination.DisplayedItems = len(list.Items)
+		next := start + len(list.Items)
+		list.Pagination.NextStartAt = nil
+		if next < len(items) {
+			list.Pagination.NextStartAt = &next
+		}
+		data, err := json.Marshal(output)
+		if err != nil {
+			return fmt.Errorf("encode tool output: %w", err)
+		}
+		if (len(data)+3)/4 <= maxTokens {
+			break
+		}
+		if len(list.Items) <= 1 {
+			return fmt.Errorf("max_tokens=%d is too small for this response; increase max_tokens", maxTokens)
+		}
+		list.Items = list.Items[:len(list.Items)-1]
+	}
+	nextStart := 0
+	if list.Pagination.NextStartAt != nil {
+		nextStart = *list.Pagination.NextStartAt
+	}
+	trace.SpanFromContext(ctx).SetAttributes(observability.EnvelopeAttrs{
+		DisplayedItems: len(list.Items), TotalItems: len(items), StartAt: start,
+		NextStartAt: nextStart, MaxTokens: maxTokens,
+		Truncated: list.Pagination.NextStartAt != nil,
+	}.Attributes()...)
+	return nil
 }

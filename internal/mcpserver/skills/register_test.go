@@ -79,7 +79,7 @@ func TestNativePaginationAndDirectLookup(t *testing.T) {
 	var entries []Entry
 	cursor := ""
 	for {
-		page, err := s.list(t.Context(), nil, &listParams{ParamsBase: mcp.ParamsBase{Meta: meta}, Cursor: cursor})
+		page, err := s.list(t.Context(), nil, &listParams{Meta: meta, Cursor: cursor})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -104,13 +104,13 @@ func TestNativePaginationAndDirectLookup(t *testing.T) {
 		}
 	}
 	// Get a skill that was not on the first page, without completing a listing.
-	got, err := s.get(t.Context(), nil, &getParams{ParamsBase: mcp.ParamsBase{Meta: meta}, URI: catalog[4].URI})
+	got, err := s.get(t.Context(), nil, &getParams{Meta: meta, URI: catalog[4].URI})
 	if err != nil || got == nil || !reflect.DeepEqual(got.Skill, catalog[4].entry()) {
 		t.Fatalf("direct lookup = %+v, %v", got, err)
 	}
-	_, err = s.list(t.Context(), nil, &listParams{ParamsBase: mcp.ParamsBase{Meta: meta}, Cursor: "invalid!"})
+	_, err = s.list(t.Context(), nil, &listParams{Meta: meta, Cursor: "invalid!"})
 	assertRPCError(t, err, jsonrpc.CodeInvalidParams)
-	_, err = s.get(t.Context(), nil, &getParams{ParamsBase: mcp.ParamsBase{Meta: meta}, URI: "skill://pkgsite/missing/SKILL.md"})
+	_, err = s.get(t.Context(), nil, &getParams{Meta: meta, URI: "skill://pkgsite/missing/SKILL.md"})
 	assertRPCError(t, err, jsonrpc.CodeInvalidParams)
 }
 

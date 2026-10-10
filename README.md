@@ -134,6 +134,49 @@ Use pkgsite to inspect vulnerabilities for golang.org/x/crypto and tell me wheth
 Use pkgsite to compare the exported APIs of github.com/redis/go-redis/v9 packages relevant to clients and pipelines.
 ```
 
+## Tool results
+
+Data tools expose an `outputSchema` and return typed JSON in `structuredContent`.
+The same object is serialized into a text content block for clients that consume
+text. Source URLs and pagination live inside the JSON payload.
+
+```text
+pkgsite_symbols(package_path="net/http")
+└── result
+    ├── structuredContent
+    │   ├── packagePath, modulePath, version
+    │   ├── items[]: kind, name, parent, synopsis
+    │   ├── pagination
+    │   │   ├── fetchedItems, displayedItems, startAt, total
+    │   │   ├── nextStartAt → continue the fetched page with start_at
+    │   │   └── upstreamNextPageToken → fetch another page with token
+    │   └── source: baseUrl, upstreamUrl
+    └── content[].text: the same JSON
+```
+
+Module and package tools return metadata directly, plus any requested
+README, documentation, imports, or licenses. `importCount` is omitted unless
+imports were included. Successful list tools always return an `items` array,
+including `[]` for an empty list. `total` retains the upstream count when
+available, falling back to the fetched item count.
+
+`max_tokens` approximately bounds list JSON using four bytes per token. A budget
+that cannot fit one item produces an actionable tool error. Local pagination
+applies to lists; entity lookups return their complete requested data.
+
+API failures set `isError: true` and preserve `error` fields such as `code`,
+`message`, `fixes`, `candidates`, and `retryAfter`. `pkgsite_explain` returns a
+combined `summary` and typed `lookups` with individual statuses, data, and errors.
+Each successful list lookup includes its own continuation fields. Partial
+failures remain visible while useful package or module data can still succeed.
+
+The `pkgsite_load_skill` compatibility tool keeps the guide's Markdown body and
+also returns a structured header. With `header_only`, the text fallback is JSON.
+Native `resources/read` returns the complete `SKILL.md`, including YAML frontmatter.
+
+This replaces the previous XML text envelopes and `summary`/`raw` entity copies;
+clients parsing those text envelopes must switch to the JSON payload.
+
 ## Local development
 
 Build the binary:
