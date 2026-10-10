@@ -7,13 +7,17 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"slices"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
 
 //go:embed docs/*/SKILL.md
 var documents embed.FS
+
+var cachedCatalog = sync.OnceValues(readCatalog)
 
 type Name string
 
@@ -33,7 +37,8 @@ type Skill struct {
 	Content     string
 	URI         string
 	Document    string
-	Frontmatter map[string]any
+	Frontmatter json.RawMessage
+	resource    Resource
 }
 
 const (
@@ -49,20 +54,32 @@ type Resource struct {
 }
 
 type Entry struct {
-	URI         string         `json:"uri"`
-	Frontmatter map[string]any `json:"frontmatter"`
-	Resources   []Resource     `json:"resources"`
+	URI         string          `json:"uri"`
+	Frontmatter json.RawMessage `json:"frontmatter"`
+	Resources   []Resource      `json:"resources"`
 }
 
 func (s Skill) entry() Entry {
-	digest := sha256.Sum256([]byte(s.Document))
 	return Entry{
-		URI: s.URI, Frontmatter: s.Frontmatter,
-		Resources: []Resource{{URI: s.URI, Digest: fmt.Sprintf("sha256:%x", digest), Size: len(s.Document)}},
+		URI: s.URI, Frontmatter: slices.Clone(s.Frontmatter),
+		Resources: []Resource{s.resource},
 	}
 }
 
+// List returns independent copies of the immutable embedded catalog.
 func List() ([]Skill, error) {
+	catalog, err := cachedCatalog()
+	if err != nil {
+		return nil, err
+	}
+	skills := make([]Skill, len(catalog))
+	for i, skill := range catalog {
+		skills[i] = skill.clone()
+	}
+	return skills, nil
+}
+
+func readCatalog() ([]Skill, error) {
 	files, err := fs.Glob(documents, "docs/*/SKILL.md")
 	if err != nil {
 		return nil, err
@@ -95,13 +112,10 @@ func parseSkill(name, document string) (Skill, error) {
 	if err := yaml.Unmarshal([]byte(header), &frontmatter); err != nil {
 		return Skill{}, err
 	}
-	// Normalize to JSON values so all authored fields can pass through the wire.
+	// Encode once so all authored fields pass through the wire unchanged.
 	encoded, err := json.Marshal(frontmatter)
 	if err != nil {
 		return Skill{}, fmt.Errorf("frontmatter is not JSON-compatible: %w", err)
-	}
-	if err := json.Unmarshal(encoded, &frontmatter); err != nil {
-		return Skill{}, err
 	}
 	if frontmatter["name"] != name {
 		return Skill{}, fmt.Errorf("frontmatter name must match directory %q", name)
@@ -113,8 +127,10 @@ func parseSkill(name, document string) (Skill, error) {
 	legacyName := Name("pkgsite/" + name)
 	skill := Skill{
 		Name: legacyName, Description: description, Content: strings.TrimSpace(body),
-		URI: "skill://" + string(legacyName) + "/SKILL.md", Document: document, Frontmatter: frontmatter,
+		URI: "skill://" + string(legacyName) + "/SKILL.md", Document: document, Frontmatter: encoded,
 	}
+	digest := sha256.Sum256([]byte(document))
+	skill.resource = Resource{URI: skill.URI, Digest: fmt.Sprintf("sha256:%x", digest), Size: len(document)}
 	if metadata, ok := frontmatter["metadata"].(map[string]any); ok {
 		if related, ok := metadata["related-skills"].(string); ok {
 			for item := range strings.SplitSeq(related, ",") {
@@ -128,14 +144,20 @@ func parseSkill(name, document string) (Skill, error) {
 }
 
 func Load(name string) (Skill, error) {
-	catalog, err := List()
+	catalog, err := cachedCatalog()
 	if err != nil {
 		return Skill{}, err
 	}
 	for _, skill := range catalog {
 		if string(skill.Name) == name {
-			return skill, nil
+			return skill.clone(), nil
 		}
 	}
 	return Skill{}, fmt.Errorf("unknown pkgsite skill %q", name)
+}
+
+func (s Skill) clone() Skill {
+	s.Related = slices.Clone(s.Related)
+	s.Frontmatter = slices.Clone(s.Frontmatter)
+	return s
 }

@@ -1,6 +1,60 @@
 package skills
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
+
+func TestCatalogReturnsIndependentCopies(t *testing.T) {
+	t.Parallel()
+	for _, source := range []string{"list", "load"} {
+		t.Run(source, func(t *testing.T) {
+			t.Parallel()
+			before := loadSkillForTest(t, string(Entities))
+			var skill Skill
+			if source == "list" {
+				catalog, err := List()
+				if err != nil {
+					t.Fatal(err)
+				}
+				skill = catalog[0]
+				catalog[0] = Skill{}
+			} else {
+				skill = loadSkillForTest(t, string(Entities))
+			}
+			skill.Related[0] = "changed"
+			skill.Frontmatter[0] = '!'
+
+			after := loadSkillForTest(t, string(Entities))
+			if !reflect.DeepEqual(after, before) {
+				t.Fatalf("%s caller mutated cached skill: %+v", source, after)
+			}
+			catalog, err := List()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(catalog[0], before) {
+				t.Fatalf("%s caller mutated cached listing: %+v", source, catalog[0])
+			}
+		})
+	}
+}
+
+func TestSkillEntryReturnsIndependentCopies(t *testing.T) {
+	t.Parallel()
+	document := "---\nname: example\ndescription: Example guide.\nextra:\n  - label: original\n---\n\n# Example\n"
+	skill, err := parseSkill("example", document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := skill.entry()
+	entry := skill.entry()
+	entry.Frontmatter[0] = '!'
+	entry.Resources[0].Digest = "changed"
+	if after := skill.entry(); !reflect.DeepEqual(after, before) {
+		t.Fatalf("native result mutated cached entry: %+v", after)
+	}
+}
 
 func TestLoadParsesHeader(t *testing.T) {
 	t.Parallel()

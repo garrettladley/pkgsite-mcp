@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"path"
 	"slices"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
@@ -57,7 +58,7 @@ type service struct {
 // Register serves the embedded catalog through the Skills extension and normal
 // resources. The caller must advertise Extension in its server capabilities.
 func Register(server *mcp.Server) error {
-	catalog, err := List()
+	catalog, err := cachedCatalog()
 	if err != nil {
 		return err
 	}
@@ -87,7 +88,7 @@ func Register(server *mcp.Server) error {
 	})
 	for _, skill := range catalog {
 		server.AddResource(&mcp.Resource{
-			URI: skill.URI, Name: skill.Frontmatter["name"].(string),
+			URI: skill.URI, Name: path.Base(string(skill.Name)),
 			Description: skill.Description, MIMEType: "text/markdown",
 		}, func(_ context.Context, _ *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{

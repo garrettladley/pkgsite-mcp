@@ -2,6 +2,7 @@ package skills
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -52,7 +53,11 @@ func TestParseSkillPreservesFrontmatter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if skill.Frontmatter["license"] != "MIT" || skill.Frontmatter["metadata"].(map[string]any)["author"] != "pkgsite" {
+	var frontmatter map[string]any
+	if err := json.Unmarshal(skill.Frontmatter, &frontmatter); err != nil {
+		t.Fatal(err)
+	}
+	if frontmatter["license"] != "MIT" || frontmatter["metadata"].(map[string]any)["author"] != "pkgsite" {
 		t.Fatalf("lost authored frontmatter: %+v", skill.Frontmatter)
 	}
 	if skill.Document != document || skill.Content != "# Example" {
