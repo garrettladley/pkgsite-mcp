@@ -1,3 +1,10 @@
+---
+name: overview
+description: What pkgsite-mcp is and when to use it.
+metadata:
+  related-skills: pkgsite/entities,pkgsite/operations,pkgsite/pagination,pkgsite/precision
+---
+
 # pkgsite-mcp overview
 
 Use pkgsite-mcp when you need current structured facts from `pkg.go.dev/v1` about Go modules, packages, versions, exported symbols, imported-by relationships, or vulnerabilities.
@@ -10,4 +17,4 @@ Data tools advertise an `outputSchema` and return a typed JSON object in `struct
 
 Upstream API failures set MCP `isError: true` and include actionable `error` details. `pkgsite_explain` returns an aggregate `summary` and typed `lookups`, each with a `status` and either `data`, `error`, or a skip `reason`. It can succeed with partial lookup failures; it reports a tool error when neither a package nor a module can be resolved.
 
-Full skill guides return Markdown text alongside their structured header. `header_only` returns the header as both structured content and JSON text.
+The `pkgsite_load_skill` compatibility tool returns the guide's Markdown body alongside its structured header. `header_only` returns the header as both structured content and JSON text. Native `resources/read` returns the complete `SKILL.md`, including YAML frontmatter.

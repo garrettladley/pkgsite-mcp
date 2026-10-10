@@ -100,6 +100,26 @@ server config:
 - Load short built-in guides that help agents use the tools precisely.
 - Run `pkgsite_explain` for a compact combined lookup of a module or package.
 
+The server also supports the official
+[Skills extension](https://modelcontextprotocol.io/extensions/skills/overview)
+(`io.modelcontextprotocol/skills`). Clients that implement the extension can use
+`skills/list` and `skills/get` to discover guide metadata and file manifests, then
+load a guide through `resources/read`. Start with
+`skill://pkgsite/overview/SKILL.md`. The five guides cover overview, entities,
+operations, pagination, and precision; each is a single Markdown resource with
+YAML frontmatter and a SHA-256 manifest.
+
+Clients without the extension can keep using `pkgsite_list_skills` and
+`pkgsite_load_skill`, including names such as `pkgsite/overview` and the existing
+`header_only` option. Both tools remain listed for every client. Resource-aware
+clients can also browse the guides through `resources/list` and `resources/read`;
+reading a resource does not itself activate a native skill. Directory reading is
+not advertised.
+
+HTTP and stdio support protocol revision `2026-07-28` alongside older negotiated
+revisions. Clients discover native Skills support in the server capabilities;
+the compatibility tools remain available on all supported revisions.
+
 Examples of useful prompts after adding the MCP server:
 
 ```text
@@ -150,8 +170,9 @@ combined `summary` and typed `lookups` with individual statuses, data, and error
 Each successful list lookup includes its own continuation fields. Partial
 failures remain visible while useful package or module data can still succeed.
 
-Full skill guides keep their Markdown text and also return a structured header.
-With `header_only`, the text fallback is JSON.
+The `pkgsite_load_skill` compatibility tool keeps the guide's Markdown body and
+also returns a structured header. With `header_only`, the text fallback is JSON.
+Native `resources/read` returns the complete `SKILL.md`, including YAML frontmatter.
 
 This replaces the previous XML text envelopes and `summary`/`raw` entity copies;
 clients parsing those text envelopes must switch to the JSON payload.
