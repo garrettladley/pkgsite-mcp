@@ -10,12 +10,12 @@ import (
 
 	"github.com/garrettladley/pkgsite-mcp/internal/config"
 	kvredis "github.com/garrettladley/pkgsite-mcp/internal/kv/redis"
+	"github.com/garrettladley/pkgsite-mcp/internal/mcpserver/skills"
 	"github.com/garrettladley/pkgsite-mcp/internal/mcpserver/tools"
 	"github.com/garrettladley/pkgsite-mcp/internal/observability"
 	sentryobs "github.com/garrettladley/pkgsite-mcp/internal/observability/sentry"
 	"github.com/garrettladley/pkgsite-mcp/internal/pkgsite"
 	"github.com/garrettladley/pkgsite-mcp/internal/version"
-	"github.com/garrettladley/pkgsite-mcp/internal/xhttp"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -108,7 +108,13 @@ func (s *Server) mcpServer(transport observability.MCPTransport) *mcp.Server {
 			Version:    version.Public(),
 			WebsiteURL: mcpServerWebsiteURL,
 		},
-		&mcp.ServerOptions{Logger: s.logger},
+		&mcp.ServerOptions{
+			Logger: s.logger,
+			Capabilities: &mcp.ServerCapabilities{Extensions: map[string]any{
+				skills.Extension: map[string]any{},
+			}},
+			Instructions: "Use pkgsite for current Go package facts. Skill guides are available through the Skills extension, starting at skill://pkgsite/overview/SKILL.md. Clients without Skills support can use pkgsite_list_skills and pkgsite_load_skill.",
+		},
 	)
 	mcpTracingConfig := observability.MCPServerTracingConfig{
 		Transport: transport,
@@ -120,37 +126,25 @@ func (s *Server) mcpServer(transport observability.MCPTransport) *mcp.Server {
 	}
 	server.AddReceivingMiddleware(observability.MCPServerTracingMiddleware(mcpTracingConfig))
 	server.AddSendingMiddleware(observability.MCPServerSendingTracingMiddleware(mcpTracingConfig))
-	server.AddReceivingMiddleware(recordInitializeMetrics)
+	server.AddReceivingMiddleware(recordDiscoveryMetrics)
 	tools.Register(server, s.client)
+	if err := skills.Register(server); err != nil {
+		panic(fmt.Sprintf("register embedded skills: %v", err))
+	}
 	return server
 }
 
-func recordInitializeMetrics(next mcp.MethodHandler) mcp.MethodHandler {
+func recordDiscoveryMetrics(next mcp.MethodHandler) mcp.MethodHandler {
 	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 		result, err := next(ctx, method, req)
-		if method == "initialize" && err == nil {
-			recordInitialize(ctx, req)
+		if err == nil {
+			switch method {
+			case "initialize":
+				observability.RecordMCPInitialize(ctx, observability.MCPRequestClientAttrs(req))
+			case "server/discover":
+				observability.RecordMCPDiscover(ctx, observability.MCPRequestClientAttrs(req))
+			}
 		}
 		return result, err
 	}
-}
-
-func recordInitialize(ctx context.Context, req mcp.Request) {
-	params, ok := req.GetParams().(*mcp.InitializeParams)
-	if !ok || params == nil {
-		return
-	}
-
-	attrs := observability.InitializeAttrs{
-		ProtocolVersion: params.ProtocolVersion,
-	}
-	if params.ClientInfo != nil {
-		attrs.ClientName = params.ClientInfo.Name
-		attrs.ClientTitle = params.ClientInfo.Title
-		attrs.ClientVersion = params.ClientInfo.Version
-	}
-	if extra := req.GetExtra(); extra != nil {
-		attrs.ProtocolVersionHeader = extra.Header.Get(xhttp.HeaderMCPProtocolVersion)
-	}
-	observability.RecordMCPInitialize(ctx, attrs)
 }

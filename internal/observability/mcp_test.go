@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -39,6 +40,28 @@ func TestRecordMCPInitializeWritesMetricSink(t *testing.T) {
 	assertStringAttr(t, record.attrs, AttrMCPClientTitle, "Codex")
 	assertStringAttr(t, record.attrs, AttrMCPClientVersion, "1.2.3")
 	assertStringAttr(t, record.attrs, AttrMCPProtocolVersion, "2025-06-18")
+}
+
+func TestRecordMCPDiscoverWritesSeparateMetric(t *testing.T) {
+	t.Parallel()
+	sink := &recordingMetricSink{}
+	metrics := newMCPMetrics()
+	metrics.init(sink)
+	metrics.recordDiscover(t.Context(), InitializeAttrs{ClientName: "modern-client", ProtocolVersion: "2026-07-28"})
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if len(sink.counts) != 1 || sink.counts[0].name != "mcp.discover" || sink.counts[0].value != 1 {
+		t.Fatalf("discover metric = %+v", sink.counts)
+	}
+	assertStringAttr(t, sink.counts[0].attrs, AttrMCPProtocolVersion, "2026-07-28")
+}
+
+func TestMCPRequestClientAttrsWithoutParams(t *testing.T) {
+	t.Parallel()
+	attrs := MCPRequestClientAttrs(&mcp.ServerRequest[*mcp.ListToolsParams]{})
+	if attrs.ProtocolVersion != "" || attrs.ClientName != "" {
+		t.Fatalf("metadata unexpectedly populated: %+v", attrs)
+	}
 }
 
 type recordingMetricSink struct {

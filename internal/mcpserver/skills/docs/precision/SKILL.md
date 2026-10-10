@@ -1,3 +1,10 @@
+---
+name: precision
+description: How to avoid module and package ambiguity.
+metadata:
+  related-skills: pkgsite/entities,pkgsite/operations
+---
+
 # Precision
 
 Package paths can be ambiguous across modules. If a package lookup returns candidates or an ambiguity message, repeat the call with `module_path`.

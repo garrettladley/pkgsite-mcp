@@ -1,3 +1,10 @@
+---
+name: pagination
+description: How upstream page tokens and local response truncation work.
+metadata:
+  related-skills: pkgsite/operations
+---
+
 # Pagination
 
 There are two pagination layers.

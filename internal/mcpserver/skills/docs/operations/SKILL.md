@@ -1,3 +1,10 @@
+---
+name: operations
+description: Operation-by-operation guidance for the MCP tools.
+metadata:
+  related-skills: pkgsite/pagination,pkgsite/precision
+---
+
 # Operations
 
 Use `pkgsite_module` for module metadata, `pkgsite_versions` for available versions, and `pkgsite_packages` for package lists inside a module.

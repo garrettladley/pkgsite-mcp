@@ -68,6 +68,36 @@ func TestMCPServerSpanAttrsInitialize(t *testing.T) {
 	assertIntAttr(t, attrs, AttrClientPort, 54321)
 }
 
+func TestMCPServerSpanAttrsPerRequestMetadata(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"first-client", "second-client", ""} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			meta := mcp.Meta{
+				mcp.MetaKeyProtocolVersion:    "2026-07-28",
+				mcp.MetaKeyClientCapabilities: &mcp.ClientCapabilities{},
+			}
+			if name != "" {
+				meta[mcp.MetaKeyClientInfo] = &mcp.Implementation{Name: name, Version: "1"}
+			}
+			req := &mcp.ServerRequest[*mcp.ReadResourceParams]{Params: &mcp.ReadResourceParams{
+				Meta: meta, URI: "skill://pkgsite/overview/SKILL.md",
+			}}
+			attrs := MCPServerSpanAttrs(MCPMethodResourcesRead, req, MCPServerTracingConfig{})
+			assertStringAttr(t, attrs, AttrMCPProtocolVersion, "2026-07-28")
+			if name != "" {
+				assertStringAttr(t, attrs, AttrMCPClientName, name)
+			} else {
+				for _, attr := range attrs {
+					if attr.Key == AttrMCPClientName {
+						t.Fatalf("omitted identity populated: %+v", attrs)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestMCPServerSpanAttrsInitializeDoesNotDuplicateClientAddress(t *testing.T) {
 	t.Parallel()
 

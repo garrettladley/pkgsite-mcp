@@ -1,3 +1,10 @@
+---
+name: overview
+description: What pkgsite-mcp is and when to use it.
+metadata:
+  related-skills: pkgsite/entities,pkgsite/operations,pkgsite/pagination,pkgsite/precision
+---
+
 # pkgsite-mcp overview
 
 Use pkgsite-mcp when you need current structured facts from `pkg.go.dev/v1` about Go modules, packages, versions, exported symbols, imported-by relationships, or vulnerabilities.

@@ -18,6 +18,7 @@ import (
 
 const (
 	MCPMethodInitialize    = "initialize"
+	MCPMethodDiscover      = "server/discover"
 	MCPMethodToolsCall     = "tools/call"
 	MCPMethodPromptsGet    = "prompts/get"
 	MCPMethodResourcesRead = "resources/read"
@@ -155,12 +156,14 @@ func mcpServerSpanAttrs(ctx context.Context, method string, req mcp.Request, cfg
 	attrs = appendTrimmedString(attrs, AttrMCPServerVersion, cfg.Server.Version)
 	if session := req.GetSession(); !isNilSession(session) {
 		attrs = appendTrimmedString(attrs, AttrMCPSessionID, session.ID())
-		if initParams := sessionInitializeParams(session); initParams != nil {
-			attrs = appendInitializeTraceAttrs(attrs, initParams)
-		}
 	}
+	clientAttrs := MCPRequestClientAttrs(req)
+	attrs = appendTrimmedString(attrs, AttrMCPProtocolVersion, clientAttrs.ProtocolVersion)
+	attrs = appendTrimmedString(attrs, AttrMCPClientName, clientAttrs.ClientName)
+	attrs = appendTrimmedString(attrs, AttrMCPClientTitle, clientAttrs.ClientTitle)
+	attrs = appendTrimmedString(attrs, AttrMCPClientVersion, clientAttrs.ClientVersion)
+	attrs = appendTrimmedString(attrs, AttrMCPProtocolVersionHeader, clientAttrs.ProtocolVersionHeader)
 	if extra := req.GetExtra(); extra != nil {
-		attrs = appendTrimmedString(attrs, AttrMCPProtocolVersionHeader, extra.Header.Get(xhttp.HeaderMCPProtocolVersion))
 		attrs = appendTrimmedString(attrs, AttrMCPRequestID, extra.Header.Get(xhttp.HeaderInternalMCPRequestID))
 		attrs = appendClientAddressAttrs(attrs, method, extra.Header.Get(xhttp.HeaderInternalMCPClientAddress), extra.Header.Get(xhttp.HeaderInternalMCPClientPort))
 	} else if client, ok := xcontext.MCPClientFrom(ctx); ok {
@@ -168,10 +171,6 @@ func mcpServerSpanAttrs(ctx context.Context, method string, req mcp.Request, cfg
 	}
 
 	switch method {
-	case MCPMethodInitialize:
-		if params, ok := req.GetParams().(*mcp.InitializeParams); ok && params != nil {
-			attrs = appendInitializeTraceAttrs(attrs, params)
-		}
 	case MCPMethodToolsCall:
 		if params, ok := req.GetParams().(*mcp.CallToolParamsRaw); ok && params != nil {
 			attrs = appendTrimmedString(attrs, AttrMCPToolName, params.Name)
@@ -285,21 +284,6 @@ func (t MCPTransport) NetworkTransport() string {
 	}
 }
 
-type initializeParamsProvider interface {
-	InitializeParams() *mcp.InitializeParams
-}
-
-func sessionInitializeParams(session mcp.Session) *mcp.InitializeParams {
-	if isNilSession(session) {
-		return nil
-	}
-	provider, ok := session.(initializeParamsProvider)
-	if !ok {
-		return nil
-	}
-	return provider.InitializeParams()
-}
-
 func isNilSession(session mcp.Session) bool {
 	if session == nil {
 		return true
@@ -308,21 +292,8 @@ func isNilSession(session mcp.Session) bool {
 	return value.Kind() == reflect.Pointer && value.IsNil()
 }
 
-func appendInitializeTraceAttrs(attrs []attribute.KeyValue, params *mcp.InitializeParams) []attribute.KeyValue {
-	if params == nil {
-		return attrs
-	}
-	attrs = appendTrimmedString(attrs, AttrMCPProtocolVersion, params.ProtocolVersion)
-	if params.ClientInfo != nil {
-		attrs = appendTrimmedString(attrs, AttrMCPClientName, params.ClientInfo.Name)
-		attrs = appendTrimmedString(attrs, AttrMCPClientTitle, params.ClientInfo.Title)
-		attrs = appendTrimmedString(attrs, AttrMCPClientVersion, params.ClientInfo.Version)
-	}
-	return attrs
-}
-
 func appendClientAddressAttrs(attrs []attribute.KeyValue, method, address, portValue string) []attribute.KeyValue {
-	if method != MCPMethodInitialize {
+	if method != MCPMethodInitialize && method != MCPMethodDiscover {
 		return attrs
 	}
 	attrs = appendTrimmedString(attrs, AttrClientAddress, address)

@@ -1,3 +1,10 @@
+---
+name: entities
+description: Definitions for the core pkg.go.dev API entities.
+metadata:
+  related-skills: pkgsite/overview,pkgsite/precision
+---
+
 # Entities
 
 A module is the versioned unit named by `module_path`, such as `golang.org/x/oauth2`.

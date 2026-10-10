@@ -1,26 +1,19 @@
 package skills
 
 import (
+	"crypto/sha256"
+	"embed"
+	"encoding/json"
 	"fmt"
+	"io/fs"
+	"path"
 	"strings"
 
-	_ "embed"
+	"gopkg.in/yaml.v3"
 )
 
-//go:embed docs/overview.md
-var skillOverview string
-
-//go:embed docs/entities.md
-var skillEntities string
-
-//go:embed docs/operations.md
-var skillOperations string
-
-//go:embed docs/pagination.md
-var skillPagination string
-
-//go:embed docs/precision.md
-var skillPrecision string
+//go:embed docs/*/SKILL.md
+var documents embed.FS
 
 type Name string
 
@@ -32,11 +25,15 @@ const (
 	Precision  Name = "pkgsite/precision"
 )
 
+// Skill carries both the compatibility tool view and the native resource bytes.
 type Skill struct {
 	Name        Name
 	Description string
 	Related     []Name
 	Content     string
+	URI         string
+	Document    string
+	Frontmatter map[string]any
 }
 
 const (
@@ -45,66 +42,100 @@ const (
 	FieldRelated     = "related"
 )
 
-var (
-	entitiesSkill = Skill{
-		Name:        Entities,
-		Description: "Definitions for the core pkg.go.dev API entities.",
-		Related:     []Name{Overview, Precision},
-		Content:     strings.TrimSpace(skillEntities),
-	}
-	operationsSkill = Skill{
-		Name:        Operations,
-		Description: "Operation-by-operation guidance for the MCP tools.",
-		Related:     []Name{Pagination, Precision},
-		Content:     strings.TrimSpace(skillOperations),
-	}
-	overviewSkill = Skill{
-		Name:        Overview,
-		Description: "What pkgsite-mcp is and when to use it.",
-		Related:     []Name{Entities, Operations, Pagination, Precision},
-		Content:     strings.TrimSpace(skillOverview),
-	}
-	paginationSkill = Skill{
-		Name:        Pagination,
-		Description: "How upstream page tokens and local response truncation work.",
-		Related:     []Name{Operations},
-		Content:     strings.TrimSpace(skillPagination),
-	}
-	precisionSkill = Skill{
-		Name:        Precision,
-		Description: "How to avoid module and package ambiguity.",
-		Related:     []Name{Entities, Operations},
-		Content:     strings.TrimSpace(skillPrecision),
-	}
+type Resource struct {
+	URI    string `json:"uri"`
+	Digest string `json:"digest"`
+	Size   int    `json:"size"`
+}
 
-	catalog = []Skill{
-		entitiesSkill,
-		operationsSkill,
-		overviewSkill,
-		paginationSkill,
-		precisionSkill,
+type Entry struct {
+	URI         string         `json:"uri"`
+	Frontmatter map[string]any `json:"frontmatter"`
+	Resources   []Resource     `json:"resources"`
+}
+
+func (s Skill) entry() Entry {
+	digest := sha256.Sum256([]byte(s.Document))
+	return Entry{
+		URI: s.URI, Frontmatter: s.Frontmatter,
+		Resources: []Resource{{URI: s.URI, Digest: fmt.Sprintf("sha256:%x", digest), Size: len(s.Document)}},
 	}
-)
+}
 
 func List() ([]Skill, error) {
-	skills := make([]Skill, len(catalog))
-	copy(skills, catalog)
-	return skills, nil
+	files, err := fs.Glob(documents, "docs/*/SKILL.md")
+	if err != nil {
+		return nil, err
+	}
+	catalog := make([]Skill, 0, len(files))
+	for _, file := range files {
+		data, err := documents.ReadFile(file)
+		if err != nil {
+			return nil, err
+		}
+		skill, err := parseSkill(path.Base(path.Dir(file)), string(data))
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", file, err)
+		}
+		catalog = append(catalog, skill)
+	}
+	return catalog, nil
+}
+
+func parseSkill(name, document string) (Skill, error) {
+	rest, ok := strings.CutPrefix(document, "---\n")
+	if !ok {
+		return Skill{}, fmt.Errorf("missing YAML frontmatter")
+	}
+	header, body, ok := strings.Cut(rest, "\n---\n")
+	if !ok {
+		return Skill{}, fmt.Errorf("missing frontmatter delimiter")
+	}
+	var frontmatter map[string]any
+	if err := yaml.Unmarshal([]byte(header), &frontmatter); err != nil {
+		return Skill{}, err
+	}
+	// Normalize to JSON values so all authored fields can pass through the wire.
+	encoded, err := json.Marshal(frontmatter)
+	if err != nil {
+		return Skill{}, fmt.Errorf("frontmatter is not JSON-compatible: %w", err)
+	}
+	if err := json.Unmarshal(encoded, &frontmatter); err != nil {
+		return Skill{}, err
+	}
+	if frontmatter["name"] != name {
+		return Skill{}, fmt.Errorf("frontmatter name must match directory %q", name)
+	}
+	description, ok := frontmatter["description"].(string)
+	if !ok || strings.TrimSpace(description) == "" {
+		return Skill{}, fmt.Errorf("missing description")
+	}
+	legacyName := Name("pkgsite/" + name)
+	skill := Skill{
+		Name: legacyName, Description: description, Content: strings.TrimSpace(body),
+		URI: "skill://" + string(legacyName) + "/SKILL.md", Document: document, Frontmatter: frontmatter,
+	}
+	if metadata, ok := frontmatter["metadata"].(map[string]any); ok {
+		if related, ok := metadata["related-skills"].(string); ok {
+			for item := range strings.SplitSeq(related, ",") {
+				if item = strings.TrimSpace(item); item != "" {
+					skill.Related = append(skill.Related, Name(item))
+				}
+			}
+		}
+	}
+	return skill, nil
 }
 
 func Load(name string) (Skill, error) {
-	switch Name(name) {
-	case Entities:
-		return entitiesSkill, nil
-	case Operations:
-		return operationsSkill, nil
-	case Overview:
-		return overviewSkill, nil
-	case Pagination:
-		return paginationSkill, nil
-	case Precision:
-		return precisionSkill, nil
-	default:
-		return Skill{}, fmt.Errorf("unknown pkgsite skill %q", name)
+	catalog, err := List()
+	if err != nil {
+		return Skill{}, err
 	}
+	for _, skill := range catalog {
+		if string(skill.Name) == name {
+			return skill, nil
+		}
+	}
+	return Skill{}, fmt.Errorf("unknown pkgsite skill %q", name)
 }
