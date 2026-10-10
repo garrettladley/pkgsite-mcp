@@ -169,34 +169,47 @@ func TestClientPackageSchedulesSymbolsWarm(t *testing.T) {
 	}})
 }
 
-func TestClientPackageSummaryIncludesV1IdentityFields(t *testing.T) {
+func TestClientPackagePreservesV1IdentityFields(t *testing.T) {
 	t.Parallel()
 
-	client, _ := newFakeUpstreamClient(t, func(t *testing.T, w http.ResponseWriter, _ *http.Request) {
-		t.Helper()
-		writeJSON(t, w, http.StatusOK, map[string]any{
-			"path":              "example.com/pkg",
-			"name":              "pkg",
-			"synopsis":          "Package pkg does useful things.",
-			"isRedistributable": true,
-			"modulePath":        "example.com",
-			"version":           "v1.2.3",
-		})
-	})
+	for _, redistributable := range []bool{true, false} {
+		t.Run(fmt.Sprintf("redistributable=%t", redistributable), func(t *testing.T) {
+			t.Parallel()
 
-	got, err := client.Package(t.Context(), PackageInput{PackagePath: "example.com/pkg"})
-	if err != nil {
-		t.Fatalf("Package returned error: %v", err)
-	}
-	for key, want := range map[string]any{
-		"path":              "example.com/pkg",
-		"name":              "pkg",
-		"synopsis":          "Package pkg does useful things.",
-		"isRedistributable": true,
-	} {
-		if got.Summary[key] != want {
-			t.Fatalf("summary[%q] = %#v, want %#v", key, got.Summary[key], want)
-		}
+			want := map[string]any{
+				"path":              "example.com/pkg",
+				"name":              "pkg",
+				"synopsis":          "Package pkg does useful things.",
+				"isRedistributable": redistributable,
+				"modulePath":        "example.com",
+				"version":           "v1.2.3",
+			}
+			client, _ := newFakeUpstreamClient(t, func(t *testing.T, w http.ResponseWriter, _ *http.Request) {
+				t.Helper()
+				writeJSON(t, w, http.StatusOK, want)
+			})
+
+			got, err := client.Package(t.Context(), PackageInput{PackagePath: "example.com/requested"})
+			if err != nil {
+				t.Fatalf("Package returned error: %v", err)
+			}
+			raw, err := json.Marshal(got.Raw)
+			if err != nil {
+				t.Fatalf("marshal raw package: %v", err)
+			}
+			var rawFields map[string]any
+			if err := json.Unmarshal(raw, &rawFields); err != nil {
+				t.Fatalf("unmarshal raw package: %v", err)
+			}
+			for key, value := range want {
+				if got.Summary[key] != value {
+					t.Fatalf("summary[%q] = %#v, want %#v", key, got.Summary[key], value)
+				}
+				if rawFields[key] != value {
+					t.Fatalf("raw[%q] = %#v, want %#v", key, rawFields[key], value)
+				}
+			}
+		})
 	}
 }
 
