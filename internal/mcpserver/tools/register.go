@@ -53,27 +53,24 @@ func instrumentTool[I, O any](toolName string, next mcp.ToolHandlerFor[I, O]) mc
 	}
 }
 
-func (s *service) result(ctx context.Context, result pkgsite.Result, page pkgsite.PageInput, toolName string, nextArgs map[string]any, err error) (*mcp.CallToolResult, any, error) {
+func (s *service) result(ctx context.Context, result pkgsite.Result, toolName string, args map[string]any, err error) (*mcp.CallToolResult, error) {
 	span := trace.SpanFromContext(ctx)
-	span.SetAttributes(toolAttrs(toolName, nextArgs, result).Attributes()...)
+	span.SetAttributes(toolAttrs(toolName, args, result).Attributes()...)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	resultAttrs := observability.ResultAttrs{FromCache: result.FromCache, UpstreamURLPresent: result.UpstreamURL != "", ResultCount: len(result.Items)}
+	attrs := observability.ResultAttrs{FromCache: result.FromCache, UpstreamURLPresent: result.UpstreamURL != "", ResultCount: len(result.Items)}
 	if result.Error != nil {
-		resultAttrs.ErrorStatusCode = result.Error.StatusCode
+		attrs.ErrorStatusCode = result.Error.StatusCode
 		if unexpectedPkgsiteStatus(result.Error.StatusCode) {
 			span.SetStatus(codes.Error, result.Error.Status)
 		}
 	}
-	span.SetAttributes(resultAttrs.Attributes()...)
-	opts := envelopeOptions{Source: pkgsite.DefaultBaseURL, UpstreamURL: result.UpstreamURL, ToolName: toolName, NextArgs: nextArgs}
-	if len(result.Items) > 0 || result.Pagination != nil {
-		span.SetAttributes(envelopeAttrs(result, page).Attributes()...)
-		return textResult(paginatedEnvelope(result, page, opts)), nil, nil
+	span.SetAttributes(attrs.Attributes()...)
+	if result.Error != nil {
+		return &mcp.CallToolResult{IsError: true}, nil
 	}
-	span.SetAttributes(observability.EnvelopeAttrs{DisplayedItems: 1, TotalItems: 1, MaxTokens: page.MaxTokens}.Attributes()...)
-	return textResult(singleEnvelope(result, opts)), nil, nil
+	return nil, nil
 }
 
 func unexpectedPkgsiteStatus(statusCode int) bool {
@@ -92,22 +89,6 @@ func toolAttrs(toolName string, args map[string]any, result pkgsite.Result) obse
 		HasFilter:        strings.TrimSpace(stringArg(args, "filter")) != "",
 		HasToken:         strings.TrimSpace(stringArg(args, "token")) != "",
 		Limit:            intArg(args, "limit"),
-	}
-}
-
-func envelopeAttrs(result pkgsite.Result, page pkgsite.PageInput) observability.EnvelopeAttrs {
-	total := len(result.Items)
-	if result.Pagination != nil {
-		if value, ok := result.Pagination["total"].(int); ok && value > 0 {
-			total = value
-		}
-	}
-	return observability.EnvelopeAttrs{
-		DisplayedItems: len(result.Items),
-		TotalItems:     total,
-		StartAt:        page.StartAt,
-		MaxTokens:      page.MaxTokens,
-		Truncated:      page.StartAt > 0 || len(result.Items) < total,
 	}
 }
 

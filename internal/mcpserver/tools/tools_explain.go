@@ -17,9 +17,9 @@ type explainLookup struct {
 	err    error
 }
 
-func (s *service) explain(ctx context.Context, _ *mcp.CallToolRequest, input pkgsite.ExplainInput) (*mcp.CallToolResult, any, error) {
+func (s *service) explain(ctx context.Context, _ *mcp.CallToolRequest, input pkgsite.ExplainInput) (*mcp.CallToolResult, explainPayload, error) {
 	if strings.TrimSpace(input.Path) == "" {
-		return nil, nil, fmt.Errorf("path is required")
+		return nil, explainPayload{}, fmt.Errorf("path is required")
 	}
 
 	var (
@@ -54,7 +54,7 @@ func (s *service) explain(ctx context.Context, _ *mcp.CallToolRequest, input pkg
 		return nil
 	})
 	if err := group.Wait(); err != nil {
-		return nil, nil, err
+		return nil, explainPayload{}, err
 	}
 
 	parts := explainParts{
@@ -69,7 +69,14 @@ func (s *service) explain(ctx context.Context, _ *mcp.CallToolRequest, input pkg
 		parts.Packages = explainSubResultSkipped(packagesSkipped)
 	}
 
-	data := buildExplainPayload(input, parts)
+	data, err := buildExplainPayload(ctx, input, parts)
+	if err != nil {
+		return nil, explainPayload{}, err
+	}
 	trace.SpanFromContext(ctx).SetAttributes(observability.ToolAttrs{ToolName: toolNameExplain, LookupKind: "explain", Path: input.Path, ModulePath: input.ModulePath, VersionRequested: input.Version}.Attributes()...)
-	return textResult(singleEnvelope(data, envelopeOptions{Source: pkgsite.DefaultBaseURL, ToolName: toolNameExplain})), nil, nil
+	var result *mcp.CallToolResult
+	if data.Summary.Kind == "unknown" {
+		result = &mcp.CallToolResult{IsError: true}
+	}
+	return result, data, nil
 }

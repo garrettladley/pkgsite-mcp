@@ -9,10 +9,16 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func (s *service) versions(ctx context.Context, _ *mcp.CallToolRequest, input pkgsite.VersionsInput) (*mcp.CallToolResult, any, error) {
+func (s *service) versions(ctx context.Context, _ *mcp.CallToolRequest, input pkgsite.VersionsInput) (*mcp.CallToolResult, versionsOutput, error) {
 	if strings.TrimSpace(input.ModulePath) == "" {
-		return nil, nil, fmt.Errorf("module_path is required")
+		return nil, versionsOutput{}, fmt.Errorf("module_path is required")
 	}
 	result, err := s.client.Versions(ctx, input)
-	return s.result(ctx, result, input.PageInput, toolNameVersions, map[string]any{"module_path": input.ModulePath, "limit": input.Limit, "token": input.Token, "filter": input.Filter}, err)
+	res, err := s.result(ctx, result, toolNameVersions, map[string]any{"module_path": input.ModulePath, "limit": input.Limit, "token": input.Token, "filter": input.Filter}, err)
+	if err != nil {
+		return nil, versionsOutput{}, err
+	}
+	output := versionsOutputFromResult(result)
+	err = paginate(ctx, result, input.PageInput, &output, &output.listOutput)
+	return res, output, err
 }
