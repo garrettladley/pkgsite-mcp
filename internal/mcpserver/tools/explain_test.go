@@ -167,7 +167,7 @@ func TestExplainBudgetsCombinedResponse(t *testing.T) {
 	}
 	// Remove roughly one item from the overall budget, including all lookup overhead.
 	budget := (len(data) - 400) / 4
-	output, err := buildExplainPayload(t.Context(), pkgsite.ExplainInput{Path: "net/http", PageInput: pkgsite.PageInput{MaxTokens: budget}}, parts)
+	output, err := buildExplainPayload(t.Context(), pkgsite.ExplainInput{Path: "net/http", MaxTokens: budget}, parts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestExplainBudgetsCombinedResponse(t *testing.T) {
 	if len(symbols.Items) != 2 || symbols.Pagination.NextStartAt == nil || *symbols.Pagination.NextStartAt != 2 || *symbols.Pagination.Total != 406 {
 		t.Fatalf("symbols = %+v", symbols)
 	}
-	if _, err := buildExplainPayload(t.Context(), pkgsite.ExplainInput{Path: "net/http", PageInput: pkgsite.PageInput{MaxTokens: 1}}, parts); err == nil {
+	if _, err := buildExplainPayload(t.Context(), pkgsite.ExplainInput{Path: "net/http", MaxTokens: 1}, parts); err == nil {
 		t.Fatal("tiny explain budget should report an error")
 	}
 }

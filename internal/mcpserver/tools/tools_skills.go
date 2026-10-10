@@ -59,8 +59,8 @@ func (s *service) loadSkill(_ context.Context, _ *mcp.CallToolRequest, input loa
 		return nil, skillOutput{}, err
 	}
 	output := skillOutput{
-		skillHeader: skillHeader{Name: skill.Name, Description: skill.Description, Related: skill.Related},
-		Resources:   []string{}, Source: sourceOutput{BaseURL: "embedded_docs"},
+		Name: skill.Name, Description: skill.Description, Related: skill.Related,
+		Resources: []string{}, Source: sourceOutput{BaseURL: "embedded_docs"},
 	}
 	if input.HeaderOnly {
 		return nil, output, nil
