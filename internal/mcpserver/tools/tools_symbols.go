@@ -9,10 +9,16 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func (s *service) symbols(ctx context.Context, _ *mcp.CallToolRequest, input pkgsite.SymbolsInput) (*mcp.CallToolResult, any, error) {
+func (s *service) symbols(ctx context.Context, _ *mcp.CallToolRequest, input pkgsite.SymbolsInput) (*mcp.CallToolResult, symbolsOutput, error) {
 	if strings.TrimSpace(input.PackagePath) == "" {
-		return nil, nil, fmt.Errorf("package_path is required")
+		return nil, symbolsOutput{}, fmt.Errorf("package_path is required")
 	}
 	result, err := s.client.Symbols(ctx, input)
-	return s.result(ctx, result, input.PageInput, toolNameSymbols, map[string]any{"package_path": input.PackagePath, "module_path": input.ModulePath, "version": input.Version, "limit": input.Limit, "token": input.Token, "filter": input.Filter}, err)
+	res, err := s.result(ctx, result, toolNameSymbols, map[string]any{"package_path": input.PackagePath, "module_path": input.ModulePath, "version": input.Version, "limit": input.Limit, "token": input.Token, "filter": input.Filter}, err)
+	if err != nil {
+		return nil, symbolsOutput{}, err
+	}
+	output := symbolsOutputFromResult(result)
+	err = paginate(ctx, result, input.PageInput, &output, &output.listOutput)
+	return res, output, err
 }
