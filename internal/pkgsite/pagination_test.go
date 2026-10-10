@@ -122,9 +122,16 @@ func TestPaginatedItemsUsesGeneratedModels(t *testing.T) {
 		{
 			name: "package info",
 			page: &pkgsiteapi.PaginatedResponsePackageInfo{Items: &[]pkgsiteapi.PackageInfo{{
-				Path: new("example.com/module/pkg"), Name: new("pkg"),
+				IsRedistributable: new(true), Path: new("example.com/module/pkg"), Name: new("pkg"), Synopsis: new("Package synopsis."),
 			}}},
-			want: []map[string]any{{"name": "pkg", "path": "example.com/module/pkg"}},
+			want: []map[string]any{{"isRedistributable": true, "name": "pkg", "path": "example.com/module/pkg", "synopsis": "Package synopsis."}},
+		},
+		{
+			name: "non-redistributable package info",
+			page: &pkgsiteapi.PaginatedResponsePackageInfo{Items: &[]pkgsiteapi.PackageInfo{{
+				IsRedistributable: new(false), Path: new("example.com/module/pkg"), Name: new("pkg"), Synopsis: new(""),
+			}}},
+			want: []map[string]any{{"isRedistributable": false, "name": "pkg", "path": "example.com/module/pkg", "synopsis": ""}},
 		},
 		{
 			name: "search results",
